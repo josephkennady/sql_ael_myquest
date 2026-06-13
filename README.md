@@ -194,13 +194,13 @@ python3 run_production_users_by_centre.py \
   --target-table production_users_one_record
 ```
 
-Resume an append run by skipping centres already present in the destination table:
+Recommended server resume command. This does not replace the table; it skips centres already present in the destination table:
 
 ```bash
 python3 run_production_users_by_centre.py \
   --centre-sql-path sql_queries/centre_ids.sql \
   --target-table production_users_one_record \
-  --workers 4 \
+  --workers 2 \
   --skip-existing
 ```
 
@@ -288,7 +288,7 @@ Use `--skip-existing` with append mode when resuming a partial run:
 python3 run_production_users_by_centre.py \
   --centre-sql-path sql_queries/centre_ids.sql \
   --target-table production_users_one_record \
-  --workers 4 \
+  --workers 2 \
   --skip-existing
 ```
 
