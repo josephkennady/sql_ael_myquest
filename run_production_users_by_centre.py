@@ -1,6 +1,7 @@
 import argparse
 import logging
 import re
+import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
@@ -155,7 +156,8 @@ def fetch_result_for_id(
     index: int,
     total: int,
     active_users: int,
-) -> tuple[int, str, pd.DataFrame]:
+    retries: int,
+) -> tuple[int, str, pd.DataFrame, Exception | None]:
     logging.info(
         "Running %s %d/%d: %s (active users=%d)",
         id_type,
@@ -165,8 +167,22 @@ def fetch_result_for_id(
         active_users,
     )
     scoped_sql = build_sql_for_id(sql_template, id_type, id_value)
-    result = fetch(SOURCE_DB, scoped_sql)
-    return index, id_value, result
+    for attempt in range(retries + 1):
+        try:
+            result = fetch(SOURCE_DB, scoped_sql)
+            return index, id_value, result, None
+        except Exception as exc:
+            if attempt >= retries:
+                return index, id_value, pd.DataFrame(), exc
+            logging.warning(
+                "%s %s failed on attempt %d/%d. Retrying. Error: %s",
+                id_type.title(),
+                id_value,
+                attempt + 1,
+                retries + 1,
+                exc,
+            )
+            time.sleep(2)
 
 
 def iter_parallel_results(
@@ -175,6 +191,7 @@ def iter_parallel_results(
     ids: list[str],
     user_counts: dict[str, int],
     workers: int,
+    retries: int,
 ):
     id_iter = iter(enumerate(ids, start=1))
     total = len(ids)
@@ -196,6 +213,7 @@ def iter_parallel_results(
                     index,
                     total,
                     user_counts.get(id_value, 0),
+                    retries,
                 )
             )
             return True
@@ -220,9 +238,12 @@ def run(
     replace_target: bool,
     workers: int,
     skip_existing: bool,
+    retries: int,
 ) -> None:
     if workers < 1:
         raise ValueError("--workers must be 1 or greater")
+    if retries < 0:
+        raise ValueError("--retries must be 0 or greater")
     if replace_target and skip_existing:
         raise ValueError("--skip-existing cannot be used with --replace-target")
 
@@ -269,6 +290,7 @@ def run(
             id_type,
             total_users,
         )
+        failed_ids: list[tuple[str, str]] = []
 
         def log_progress(id_value: str) -> None:
             nonlocal completed_ids, completed_users
@@ -290,8 +312,25 @@ def run(
                 user_counts.get(id_value, 0),
             )
 
-        def write_result(index: int, id_value: str, result: pd.DataFrame) -> None:
+        def write_result(
+            index: int,
+            id_value: str,
+            result: pd.DataFrame,
+            error: Exception | None,
+        ) -> None:
             nonlocal target_created
+            if error is not None:
+                logging.error(
+                    "%s %s failed after %d attempt(s). Skipping and continuing. Error: %s",
+                    id_type.title(),
+                    id_value,
+                    retries + 1,
+                    error,
+                )
+                failed_ids.append((id_value, str(error)))
+                log_progress(id_value)
+                return
+
             if result.empty:
                 logging.info("%s %s returned no rows. Skipping write.", id_type.title(), id_value)
                 log_progress(id_value)
@@ -321,12 +360,27 @@ def run(
                         index,
                         len(ids),
                         user_counts.get(id_value, 0),
+                        retries,
                     )
                 )
         else:
             logging.info("Using %d workers for %s reads", workers, id_type)
-            for result in iter_parallel_results(sql_template, id_type, ids, user_counts, workers):
+            for result in iter_parallel_results(
+                sql_template,
+                id_type,
+                ids,
+                user_counts,
+                workers,
+                retries,
+            ):
                 write_result(*result)
+
+        if failed_ids:
+            logging.error("%d %s ids failed and were skipped:", len(failed_ids), id_type)
+            for failed_id, error in failed_ids[:25]:
+                logging.error("  %s: %s", failed_id, error)
+            if len(failed_ids) > 25:
+                logging.error("  ... %d more failed ids", len(failed_ids) - 25)
 
 
 def parse_args() -> argparse.Namespace:
@@ -388,6 +442,12 @@ def parse_args() -> argparse.Namespace:
             "centre mode and user_id in user mode. Cannot be used with --replace-target."
         ),
     )
+    parser.add_argument(
+        "--retries",
+        type=int,
+        default=1,
+        help="Number of retries for a failed centre/user source query. Default: 1.",
+    )
     args = parser.parse_args()
     if args.replace_target and args.skip_existing:
         parser.error("--skip-existing cannot be used with --replace-target")
@@ -406,4 +466,5 @@ if __name__ == "__main__":
         replace_target=args.replace_target,
         workers=args.workers,
         skip_existing=args.skip_existing,
+        retries=args.retries,
     )

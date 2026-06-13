@@ -268,6 +268,11 @@ python3 run_production_users_by_centre.py \
     In centre mode, checks centre_id.
     In user mode, checks user_id.
     Cannot be used with --replace-target.
+
+--retries
+    Number of retries for a failed centre/user source query.
+    Default: 1
+    A failed ID is skipped after all retry attempts are exhausted.
 ```
 
 ## Rerun Behaviour
@@ -400,4 +405,35 @@ For resume runs, use `--skip-existing` and watch the destination count in anothe
 ```sql
 SELECT COUNT(DISTINCT centre_id)
 FROM quest_analytics.production_users_one_record;
+```
+
+### MySQL temporary table errors
+
+During large parallel reads, MySQL can sometimes fail a centre query with an internal temporary table error similar to:
+
+```text
+pymysql.err.ProgrammingError: (1146, "Table './rdsdbdata/tmp/#sql...' doesn't exist")
+```
+
+The runner retries failed centre/user source queries once by default. If the same ID still fails, it logs the failed ID, marks progress for that ID, skips it, and continues with the next centre/user.
+
+Use a lower worker count if this happens repeatedly:
+
+```bash
+python3 run_production_users_by_centre.py \
+  --centre-sql-path sql_queries/centre_ids.sql \
+  --target-table production_users_one_record \
+  --workers 1 \
+  --skip-existing
+```
+
+You can also increase retries:
+
+```bash
+python3 run_production_users_by_centre.py \
+  --centre-sql-path sql_queries/centre_ids.sql \
+  --target-table production_users_one_record \
+  --workers 2 \
+  --skip-existing \
+  --retries 2
 ```
