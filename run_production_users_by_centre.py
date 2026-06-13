@@ -1,7 +1,7 @@
 import argparse
 import logging
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
 import pandas as pd
@@ -130,6 +130,46 @@ def fetch_result_for_id(
     return index, id_value, result
 
 
+def iter_parallel_results(
+    sql_template: str,
+    id_type: str,
+    ids: list[str],
+    workers: int,
+):
+    id_iter = iter(enumerate(ids, start=1))
+    total = len(ids)
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        pending = set()
+
+        def submit_next() -> bool:
+            try:
+                index, id_value = next(id_iter)
+            except StopIteration:
+                return False
+            pending.add(
+                executor.submit(
+                    fetch_result_for_id,
+                    sql_template,
+                    id_type,
+                    id_value,
+                    index,
+                    total,
+                )
+            )
+            return True
+
+        for _ in range(workers):
+            if not submit_next():
+                break
+
+        while pending:
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for future in done:
+                yield future.result()
+                submit_next()
+
+
 def run(
     sql_path: Path,
     centre_sql_path: Path | None,
@@ -185,6 +225,14 @@ def run(
                 return
 
             if_exists = "append" if target_created else "replace"
+            logging.info(
+                "Writing %d rows for %s %d/%d: %s",
+                len(result),
+                id_type,
+                index,
+                len(ids),
+                id_value,
+            )
             write_table(ANALYTICS_DB, result, target_table, if_exists=if_exists)
             target_created = True
             logging.info("Wrote %d rows for %s %s", len(result), id_type, id_value)
@@ -196,21 +244,8 @@ def run(
                 )
         else:
             logging.info("Using %d workers for %s reads", workers, id_type)
-            with ThreadPoolExecutor(max_workers=workers) as executor:
-                futures = [
-                    executor.submit(
-                        fetch_result_for_id,
-                        sql_template,
-                        id_type,
-                        id_value,
-                        index,
-                        len(ids),
-                    )
-                    for index, id_value in enumerate(ids, start=1)
-                ]
-
-                for future in as_completed(futures):
-                    write_result(*future.result())
+            for result in iter_parallel_results(sql_template, id_type, ids, workers):
+                write_result(*result)
 
 
 def parse_args() -> argparse.Namespace:

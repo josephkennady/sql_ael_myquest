@@ -374,3 +374,25 @@ Check:
 ### Duplicate rows
 
 If you rerun without `--replace-target`, rows are appended. Use `--replace-target` for a clean rebuild.
+
+### Checking write progress
+
+During a parallel run, each centre that produces data should log:
+
+```text
+Writing N rows for centre ...
+Wrote N rows for centre ...
+```
+
+Centres with no matching output log:
+
+```text
+Centre <id> returned no rows. Skipping write.
+```
+
+For resume runs, use `--skip-existing` and watch the destination count in another SQL window:
+
+```sql
+SELECT COUNT(DISTINCT centre_id)
+FROM quest_analytics.production_users_one_record;
+```
