@@ -30,6 +30,7 @@ Key files:
 
 - `run_production_users_by_centre.py`: Python entry point for centre-by-centre or user-by-user execution.
 - `sql_queries/production_user_one_record_subject_project_combo.sql`: Main MySQL 8 SQL query that returns one row per user.
+- `sql_queries/production_user_one_record_subject_project_combo.md`: Detailed SQL notes, CTE flow, ERD, allocation rules, and maintenance guide.
 - `sql_queries/centre_ids_limit_10.sql`: Safe example centre-list query.
 - `db.py`: MySQL connection, SSH tunnel, fetch, and write helpers.
 - `config.py`: Environment-driven source and destination DB configuration.
