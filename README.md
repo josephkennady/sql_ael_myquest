@@ -380,6 +380,7 @@ If you rerun without `--replace-target`, rows are appended. Use `--replace-targe
 During a parallel run, each centre that produces data should log:
 
 ```text
+Running centre 12/1835: <centre-id> (active users=57)
 Writing N rows for centre ...
 Wrote N rows for centre ...
 Progress [####--------------------------] centre 12/1835 (0.65%), users 842/128000 (0.66%), current centre users=57

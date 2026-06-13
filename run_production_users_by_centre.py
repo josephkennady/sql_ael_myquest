@@ -154,8 +154,16 @@ def fetch_result_for_id(
     id_value: str,
     index: int,
     total: int,
+    active_users: int,
 ) -> tuple[int, str, pd.DataFrame]:
-    logging.info("Running %s %d/%d: %s", id_type, index, total, id_value)
+    logging.info(
+        "Running %s %d/%d: %s (active users=%d)",
+        id_type,
+        index,
+        total,
+        id_value,
+        active_users,
+    )
     scoped_sql = build_sql_for_id(sql_template, id_type, id_value)
     result = fetch(SOURCE_DB, scoped_sql)
     return index, id_value, result
@@ -165,6 +173,7 @@ def iter_parallel_results(
     sql_template: str,
     id_type: str,
     ids: list[str],
+    user_counts: dict[str, int],
     workers: int,
 ):
     id_iter = iter(enumerate(ids, start=1))
@@ -186,6 +195,7 @@ def iter_parallel_results(
                     id_value,
                     index,
                     total,
+                    user_counts.get(id_value, 0),
                 )
             )
             return True
@@ -304,11 +314,18 @@ def run(
         if workers == 1:
             for index, id_value in enumerate(ids, start=1):
                 write_result(
-                    *fetch_result_for_id(sql_template, id_type, id_value, index, len(ids))
+                    *fetch_result_for_id(
+                        sql_template,
+                        id_type,
+                        id_value,
+                        index,
+                        len(ids),
+                        user_counts.get(id_value, 0),
+                    )
                 )
         else:
             logging.info("Using %d workers for %s reads", workers, id_type)
-            for result in iter_parallel_results(sql_template, id_type, ids, workers):
+            for result in iter_parallel_results(sql_template, id_type, ids, user_counts, workers):
                 write_result(*result)
 
 
