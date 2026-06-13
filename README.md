@@ -1,6 +1,6 @@
 # SQL AEL MyQuest Pipeline
 
-This repository contains a MySQL-based AEL/MyQuest reporting pipeline. The current runner executes the one-record-per-user production SQL once for each centre ID and appends all centre outputs into one destination table.
+This repository contains a MySQL-based AEL/MyQuest reporting pipeline. The current runner executes the one-record-per-user production SQL once for each centre ID or user ID and appends all outputs into one destination table.
 
 The pipeline is designed for cases where the centre list is selected separately, for example:
 
@@ -10,7 +10,7 @@ FROM centres c
 LIMIT 10;
 ```
 
-The centre IDs are read by Python, injected one by one into the `params` CTE of the main SQL, and written into the same target table.
+The IDs are read by Python, injected one by one into the `params` CTE of the main SQL, and written into the same target table.
 
 ## Repository Layout
 
@@ -28,7 +28,7 @@ The centre IDs are read by Python, injected one by one into the `params` CTE of 
 
 Key files:
 
-- `run_production_users_by_centre.py`: Python entry point for centre-by-centre execution.
+- `run_production_users_by_centre.py`: Python entry point for centre-by-centre or user-by-user execution.
 - `sql_queries/production_user_one_record_subject_project_combo.sql`: Main MySQL 8 SQL query that returns one row per user.
 - `sql_queries/centre_ids_limit_10.sql`: Safe example centre-list query.
 - `db.py`: MySQL connection, SSH tunnel, fetch, and write helpers.
@@ -47,7 +47,13 @@ For each centre ID:
 3. Runs the SQL against the source database.
 4. Appends the returned rows into one destination table.
 
-The target table is not split by centre. All rows are written into the same table, with `centre_id` available as a column in the output.
+For each user ID, the runner instead injects:
+
+- `user_id = current user ID`
+- `centre_id = NULL`
+- `batch_id = NULL`
+
+The target table is not split by centre or user. All rows are written into the same table, with `centre_id` and `user_id` available as columns in the output.
 
 ## Requirements
 
@@ -129,6 +135,27 @@ sql_queries/centre_ids.sql
 
 That file is ignored by Git because it may contain real programme IDs, project IDs, centre filters, or other operational details.
 
+## User List SQL
+
+You can also process specific users from a local SQL file:
+
+```bash
+sql_queries/user_ids.sql
+```
+
+Example content:
+
+```sql
+SELECT u.id
+FROM users u
+WHERE u.id IN (
+  '00000000-0000-0000-0000-000000000000',
+  '11111111-1111-1111-1111-111111111111'
+);
+```
+
+That file is ignored by Git for the same reason as `centre_ids.sql`.
+
 ## Run The Pipeline
 
 Run with the example centre list and recreate the destination table on the first non-empty result:
@@ -174,6 +201,15 @@ python3 run_production_users_by_centre.py \
   --replace-target
 ```
 
+Run with your local user-list SQL:
+
+```bash
+python3 run_production_users_by_centre.py \
+  --user-sql-path sql_queries/user_ids.sql \
+  --target-table production_users_one_record \
+  --replace-target
+```
+
 ## Command Options
 
 ```text
@@ -184,12 +220,16 @@ python3 run_production_users_by_centre.py \
 --centre-sql-path
     Optional SQL file that returns centre IDs in the first column.
 
+--user-sql-path
+    Optional SQL file that returns user IDs in the first column.
+    Cannot be used together with --centre-sql-path.
+
 --target-table
     Destination table name.
     Default: production_users_one_record
 
 --limit
-    Number of centres to process when --centre-sql-path is not provided.
+    Number of centres to process when neither --centre-sql-path nor --user-sql-path is provided.
     Default: 10
     Use 0 to process all centres.
 
@@ -218,7 +258,7 @@ The repository is configured to avoid committing local secrets:
 - `.env` is ignored.
 - `*.pem` is ignored.
 - `DB_Config/` is ignored.
-- `sql_queries/centre_ids.sql` is ignored because local centre-list queries may include real IDs.
+- `sql_queries/centre_ids.sql` and `sql_queries/user_ids.sql` are ignored because local ID-list queries may include real IDs.
 - Generated outputs under `output/` are ignored.
 
 Before pushing to GitHub, check:
