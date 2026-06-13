@@ -1,0 +1,42 @@
+# ── Credentials and private keys ─────────────────────────────
+.env
+*.pem
+DB_Config/
+
+# ── Python runtime ────────────────────────────────────────────
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Pipeline output ───────────────────────────────────────────
+output/
+
+# ── Local SQL inputs that may contain real IDs ────────────────
+sql_queries/centre_ids.sql
+
+# ── macOS ─────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── Editors ───────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Logs ──────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Local cache ───────────────────────────────────────────────
+cache.duckdb
+cache.duckdb.wal
+
+# ── Misc ──────────────────────────────────────────────────────
