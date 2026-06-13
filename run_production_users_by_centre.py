@@ -31,6 +31,7 @@ UUID_RE = re.compile(
 )
 IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_]+$")
 EXISTING_ID_CHUNK_SIZE = 1000
+PROGRESS_BAR_WIDTH = 30
 
 
 def _quote_identifier(identifier: str) -> str:
@@ -115,6 +116,36 @@ WHERE {id_column_sql} IN ({placeholders})
         existing_ids.update(existing["id"].dropna().astype(str).tolist())
 
     return existing_ids
+
+
+def get_user_counts_by_id(id_type: str, ids: list[str]) -> dict[str, int]:
+    user_counts: dict[str, int] = {id_value: 0 for id_value in ids}
+    id_column = "centre_id" if id_type == "centre" else "id"
+
+    for start in range(0, len(ids), EXISTING_ID_CHUNK_SIZE):
+        chunk = ids[start : start + EXISTING_ID_CHUNK_SIZE]
+        placeholders = ", ".join(["%s"] * len(chunk))
+        sql = f"""
+SELECT u.{id_column} AS id, COUNT(*) AS user_count
+FROM users u
+WHERE u.type IN (1, 2, 3, 4)
+  AND u.status = 1
+  AND u.deleted_at IS NULL
+  AND u.{id_column} IN ({placeholders})
+GROUP BY u.{id_column}
+"""
+        counts = fetch(SOURCE_DB, sql, tuple(chunk))
+        for row in counts.itertuples(index=False):
+            user_counts[str(row.id)] = int(row.user_count)
+
+    return user_counts
+
+
+def format_progress_bar(done: int, total: int, width: int = PROGRESS_BAR_WIDTH) -> str:
+    if total <= 0:
+        return "[" + "-" * width + "]"
+    filled = min(width, int(width * done / total))
+    return "[" + "#" * filled + "-" * (width - filled) + "]"
 
 
 def fetch_result_for_id(
@@ -218,10 +249,42 @@ def run(
                 logging.info("All requested %s ids already exist. Nothing to write.", id_type)
                 return
 
+        user_counts = get_user_counts_by_id(id_type, ids)
+        total_users = sum(user_counts.values())
+        completed_ids = 0
+        completed_users = 0
+        logging.info(
+            "Progress target: %d %s ids, %d active users",
+            len(ids),
+            id_type,
+            total_users,
+        )
+
+        def log_progress(id_value: str) -> None:
+            nonlocal completed_ids, completed_users
+            completed_ids += 1
+            completed_users += user_counts.get(id_value, 0)
+            id_pct = completed_ids / len(ids) * 100 if ids else 100
+            user_pct = completed_users / total_users * 100 if total_users else 100
+            logging.info(
+                "Progress %s %s %d/%d (%.2f%%), users %d/%d (%.2f%%), current %s users=%d",
+                format_progress_bar(completed_users, total_users),
+                id_type,
+                completed_ids,
+                len(ids),
+                id_pct,
+                completed_users,
+                total_users,
+                user_pct,
+                id_type,
+                user_counts.get(id_value, 0),
+            )
+
         def write_result(index: int, id_value: str, result: pd.DataFrame) -> None:
             nonlocal target_created
             if result.empty:
                 logging.info("%s %s returned no rows. Skipping write.", id_type.title(), id_value)
+                log_progress(id_value)
                 return
 
             if_exists = "append" if target_created else "replace"
@@ -236,6 +299,7 @@ def run(
             write_table(ANALYTICS_DB, result, target_table, if_exists=if_exists)
             target_created = True
             logging.info("Wrote %d rows for %s %s", len(result), id_type, id_value)
+            log_progress(id_value)
 
         if workers == 1:
             for index, id_value in enumerate(ids, start=1):

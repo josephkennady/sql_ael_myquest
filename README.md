@@ -382,13 +382,17 @@ During a parallel run, each centre that produces data should log:
 ```text
 Writing N rows for centre ...
 Wrote N rows for centre ...
+Progress [####--------------------------] centre 12/1835 (0.65%), users 842/128000 (0.66%), current centre users=57
 ```
 
 Centres with no matching output log:
 
 ```text
 Centre <id> returned no rows. Skipping write.
+Progress [####--------------------------] centre 13/1835 (0.71%), users 901/128000 (0.70%), current centre users=59
 ```
+
+The progress bar is based on active user count, not only centre count. This is useful because some centres have many more users than others.
 
 For resume runs, use `--skip-existing` and watch the destination count in another SQL window:
 
