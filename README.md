@@ -194,6 +194,16 @@ python3 run_production_users_by_centre.py \
   --target-table production_users_one_record
 ```
 
+Resume an append run by skipping centres already present in the destination table:
+
+```bash
+python3 run_production_users_by_centre.py \
+  --centre-sql-path sql_queries/centre_ids.sql \
+  --target-table production_users_one_record \
+  --workers 4 \
+  --skip-existing
+```
+
 Run the default first 10 centres without a separate centre-list file:
 
 ```bash
@@ -251,6 +261,12 @@ python3 run_production_users_by_centre.py \
     Number of parallel source-query workers.
     Default: 1
     Start with 2 or 4. Higher values can overload the source DB or SSH tunnel.
+
+--skip-existing
+    Skip IDs already present in the destination table.
+    In centre mode, checks centre_id.
+    In user mode, checks user_id.
+    Cannot be used with --replace-target.
 ```
 
 ## Rerun Behaviour
@@ -265,6 +281,23 @@ python3 run_production_users_by_centre.py \
 ```
 
 Without `--replace-target`, the script appends rows. This is useful when extending a table, but it can create duplicates if you rerun the same centre list.
+
+Use `--skip-existing` with append mode when resuming a partial run:
+
+```bash
+python3 run_production_users_by_centre.py \
+  --centre-sql-path sql_queries/centre_ids.sql \
+  --target-table production_users_one_record \
+  --workers 4 \
+  --skip-existing
+```
+
+With this option, the runner checks the destination table before processing:
+
+- centre mode checks `centre_id`
+- user mode checks `user_id`
+- IDs already present are skipped
+- IDs not present are processed and appended
 
 ## Parallel Runs
 

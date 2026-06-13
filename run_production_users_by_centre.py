@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import pandas as pd
+import pymysql
 
 from config import ANALYTICS_DB, SOURCE_DB
 from db import TunnelPool, fetch, write_table
@@ -28,6 +29,14 @@ UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
+IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_]+$")
+EXISTING_ID_CHUNK_SIZE = 1000
+
+
+def _quote_identifier(identifier: str) -> str:
+    if not IDENTIFIER_RE.match(identifier):
+        raise ValueError(f"Invalid SQL identifier: {identifier}")
+    return f"`{identifier}`"
 
 
 def _replace_param(sql: str, param_name: str, replacement_expr: str) -> str:
@@ -79,7 +88,33 @@ LIMIT {int(limit)}
 
     ids = fetch(SOURCE_DB, sql)
     id_column = "id" if "id" in ids.columns else ids.columns[0]
-    return ids[id_column].dropna().astype(str).tolist()
+    return list(dict.fromkeys(ids[id_column].dropna().astype(str).tolist()))
+
+
+def get_existing_ids(target_table: str, id_type: str, ids: list[str]) -> set[str]:
+    table_sql = _quote_identifier(target_table)
+    id_column_sql = _quote_identifier(f"{id_type}_id")
+    existing_ids: set[str] = set()
+
+    for start in range(0, len(ids), EXISTING_ID_CHUNK_SIZE):
+        chunk = ids[start : start + EXISTING_ID_CHUNK_SIZE]
+        placeholders = ", ".join(["%s"] * len(chunk))
+        sql = f"""
+SELECT DISTINCT {id_column_sql} AS id
+FROM {table_sql}
+WHERE {id_column_sql} IN ({placeholders})
+"""
+        try:
+            existing = fetch(ANALYTICS_DB, sql, tuple(chunk))
+        except pymysql.err.ProgrammingError as exc:
+            if exc.args[0] == 1146:
+                logging.info("Target table %s does not exist yet; no IDs to skip.", target_table)
+                return set()
+            raise
+
+        existing_ids.update(existing["id"].dropna().astype(str).tolist())
+
+    return existing_ids
 
 
 def fetch_result_for_id(
@@ -103,9 +138,12 @@ def run(
     limit: int | None,
     replace_target: bool,
     workers: int,
+    skip_existing: bool,
 ) -> None:
     if workers < 1:
         raise ValueError("--workers must be 1 or greater")
+    if replace_target and skip_existing:
+        raise ValueError("--skip-existing cannot be used with --replace-target")
 
     sql_template = sql_path.read_text()
     if user_sql_path is not None:
@@ -125,6 +163,20 @@ def run(
     with TunnelPool() as pool:
         pool.open(SOURCE_DB)
         pool.open(ANALYTICS_DB)
+
+        if skip_existing:
+            existing_ids = get_existing_ids(target_table, id_type, ids)
+            if existing_ids:
+                ids = [id_value for id_value in ids if id_value not in existing_ids]
+                logging.info(
+                    "Skipping %d existing %s ids from %s",
+                    len(existing_ids),
+                    id_type,
+                    target_table,
+                )
+            if not ids:
+                logging.info("All requested %s ids already exist. Nothing to write.", id_type)
+                return
 
         def write_result(index: int, id_value: str, result: pd.DataFrame) -> None:
             nonlocal target_created
@@ -212,7 +264,18 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="Number of parallel source-query workers. Default: 1.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help=(
+            "Skip IDs already present in the target table. Checks centre_id in "
+            "centre mode and user_id in user mode. Cannot be used with --replace-target."
+        ),
+    )
+    args = parser.parse_args()
+    if args.replace_target and args.skip_existing:
+        parser.error("--skip-existing cannot be used with --replace-target")
+    return args
 
 
 if __name__ == "__main__":
@@ -226,4 +289,5 @@ if __name__ == "__main__":
         limit=None if args.limit == 0 else args.limit,
         replace_target=args.replace_target,
         workers=args.workers,
+        skip_existing=args.skip_existing,
     )
