@@ -1,7 +1,10 @@
 import argparse
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+import pandas as pd
 
 from config import ANALYTICS_DB, SOURCE_DB
 from db import TunnelPool, fetch, write_table
@@ -79,6 +82,19 @@ LIMIT {int(limit)}
     return ids[id_column].dropna().astype(str).tolist()
 
 
+def fetch_result_for_id(
+    sql_template: str,
+    id_type: str,
+    id_value: str,
+    index: int,
+    total: int,
+) -> tuple[int, str, pd.DataFrame]:
+    logging.info("Running %s %d/%d: %s", id_type, index, total, id_value)
+    scoped_sql = build_sql_for_id(sql_template, id_type, id_value)
+    result = fetch(SOURCE_DB, scoped_sql)
+    return index, id_value, result
+
+
 def run(
     sql_path: Path,
     centre_sql_path: Path | None,
@@ -86,7 +102,11 @@ def run(
     target_table: str,
     limit: int | None,
     replace_target: bool,
+    workers: int,
 ) -> None:
+    if workers < 1:
+        raise ValueError("--workers must be 1 or greater")
+
     sql_template = sql_path.read_text()
     if user_sql_path is not None:
         id_type = "user"
@@ -106,19 +126,39 @@ def run(
         pool.open(SOURCE_DB)
         pool.open(ANALYTICS_DB)
 
-        for index, id_value in enumerate(ids, start=1):
-            logging.info("Running %s %d/%d: %s", id_type, index, len(ids), id_value)
-            scoped_sql = build_sql_for_id(sql_template, id_type, id_value)
-            result = fetch(SOURCE_DB, scoped_sql)
-
+        def write_result(index: int, id_value: str, result: pd.DataFrame) -> None:
+            nonlocal target_created
             if result.empty:
                 logging.info("%s %s returned no rows. Skipping write.", id_type.title(), id_value)
-                continue
+                return
 
             if_exists = "append" if target_created else "replace"
             write_table(ANALYTICS_DB, result, target_table, if_exists=if_exists)
             target_created = True
             logging.info("Wrote %d rows for %s %s", len(result), id_type, id_value)
+
+        if workers == 1:
+            for index, id_value in enumerate(ids, start=1):
+                write_result(
+                    *fetch_result_for_id(sql_template, id_type, id_value, index, len(ids))
+                )
+        else:
+            logging.info("Using %d workers for %s reads", workers, id_type)
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = [
+                    executor.submit(
+                        fetch_result_for_id,
+                        sql_template,
+                        id_type,
+                        id_value,
+                        index,
+                        len(ids),
+                    )
+                    for index, id_value in enumerate(ids, start=1)
+                ]
+
+                for future in as_completed(futures):
+                    write_result(*future.result())
 
 
 def parse_args() -> argparse.Namespace:
@@ -166,6 +206,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Recreate the target table on the first non-empty result.",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of parallel source-query workers. Default: 1.",
+    )
     return parser.parse_args()
 
 
@@ -179,4 +225,5 @@ if __name__ == "__main__":
         target_table=args.target_table,
         limit=None if args.limit == 0 else args.limit,
         replace_target=args.replace_target,
+        workers=args.workers,
     )

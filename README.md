@@ -176,6 +176,16 @@ python3 run_production_users_by_centre.py \
   --replace-target
 ```
 
+Run multiple centres in parallel:
+
+```bash
+python3 run_production_users_by_centre.py \
+  --centre-sql-path sql_queries/centre_ids.sql \
+  --target-table production_users_one_record \
+  --replace-target \
+  --workers 4
+```
+
 Append to the existing destination table without recreating it:
 
 ```bash
@@ -234,8 +244,13 @@ python3 run_production_users_by_centre.py \
     Use 0 to process all centres.
 
 --replace-target
-    Recreate the target table on the first non-empty centre result.
+    Recreate the target table on the first non-empty result.
     Without this flag, results are appended to the existing table.
+
+--workers
+    Number of parallel source-query workers.
+    Default: 1
+    Start with 2 or 4. Higher values can overload the source DB or SSH tunnel.
 ```
 
 ## Rerun Behaviour
@@ -250,6 +265,18 @@ python3 run_production_users_by_centre.py \
 ```
 
 Without `--replace-target`, the script appends rows. This is useful when extending a table, but it can create duplicates if you rerun the same centre list.
+
+## Parallel Runs
+
+Use `--workers` to run multiple centre or user queries in parallel. Workers only read from the source database. Writes to the destination table are still handled by the main process so `--replace-target` is applied once and all rows go into the same target table.
+
+Recommended starting values:
+
+- `--workers 1`: safest, original sequential behavior
+- `--workers 2`: conservative parallel run
+- `--workers 4`: faster for larger centre lists if the DB and SSH tunnel can handle it
+
+Avoid high worker counts unless the source database and bastion have enough capacity.
 
 ## Sensitive Information Policy
 
