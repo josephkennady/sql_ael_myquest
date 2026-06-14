@@ -19,9 +19,15 @@ The IDs are read by Python, injected one by one into the `params` CTE of the mai
 ├── config.py
 ├── db.py
 ├── run_production_users_by_centre.py
+├── run_user_addon.py
 ├── sql_queries/
 │   ├── production_user_one_record_subject_project_combo.sql
-│   └── centre_ids_limit_10.sql
+│   ├── centre_ids_limit_10.sql
+│   ├── user_addon.sql
+│   └── superset_sql_jinja_file.sql
+├── superset_css/
+│   ├── ael_superset.css
+│   └── CSS_DOCUMENTATION.md
 ├── .env.example
 └── .gitignore
 ```
@@ -29,9 +35,14 @@ The IDs are read by Python, injected one by one into the `params` CTE of the mai
 Key files:
 
 - `run_production_users_by_centre.py`: Python entry point for centre-by-centre or user-by-user execution.
+- `run_user_addon.py`: Python entry point to run `user_addon.sql` and write results to the analytics DB.
 - `sql_queries/production_user_one_record_subject_project_combo.sql`: Main MySQL 8 SQL query that returns one row per user.
 - `sql_queries/production_user_one_record_subject_project_combo.md`: Detailed SQL notes, CTE flow, ERD, allocation rules, and maintenance guide.
 - `sql_queries/centre_ids_limit_10.sql`: Safe example centre-list query.
+- `sql_queries/user_addon.sql`: Supplementary user-level attributes query (gender, batch status, platform, first login). Writes to `quest_analytics.user_addon`.
+- `sql_queries/superset_sql_jinja_file.sql`: Superset virtual dataset SQL with Jinja2 filter expressions for the Youth QApp Phoenix AEL dashboard.
+- `superset_css/ael_superset.css`: Custom CSS for the Youth QApp Phoenix AEL Superset dashboard.
+- `superset_css/CSS_DOCUMENTATION.md`: Full documentation for the dashboard CSS — section breakdown, chart ID reference, flip card mechanics, and extension guide.
 - `db.py`: MySQL connection, SSH tunnel, fetch, and write helpers.
 - `config.py`: Environment-driven source and destination DB configuration.
 - `.env.example`: Placeholder environment configuration. Copy this to `.env` locally and fill in real values.
@@ -536,3 +547,147 @@ python3 run_production_users_by_centre.py \
   --skip-existing \
   --retries 2
 ```
+
+---
+
+## User Addon Pipeline
+
+`run_user_addon.py` reads `sql_queries/user_addon.sql` against the source database and writes the result to `quest_analytics.user_addon` in the analytics database.
+
+The table provides supplementary user-level attributes that are joined into the Superset virtual dataset:
+
+| Column | Description |
+|---|---|
+| `user_id` | Source user UUID |
+| `username` | Display name |
+| `gender` | Normalised to `Male`, `Female`, or `Other` |
+| `centre_name` | Centre the user belongs to |
+| `org_name` | Organisation |
+| `state_name` / `district_name` | Location |
+| `trade` | Enrolled trade |
+| `batch_name` | Batch name from `student_details` |
+| `batch_status` | `1` if user is linked to an active, non-deleted batch; `0` otherwise |
+| `centre_type` | Centre type |
+| `ple_enabled` | Whether the centre has PLE enabled |
+| `platform` | Registration platform (`created_platform`) |
+| `first_login` | Earliest login timestamp from `login_logs` |
+
+### Run User Addon
+
+Full replace (default):
+
+```bash
+python3 run_user_addon.py
+```
+
+Append to existing table:
+
+```bash
+python3 run_user_addon.py --append
+```
+
+Custom SQL path or target table:
+
+```bash
+python3 run_user_addon.py \
+  --sql-path sql_queries/user_addon.sql \
+  --target-table user_addon
+```
+
+### User Addon Command Options
+
+```text
+--sql-path
+    Path to the SQL file.
+    Default: sql_queries/user_addon.sql
+
+--target-table
+    Destination table name in the analytics DB.
+    Default: user_addon
+
+--append
+    Append rows instead of replacing the table.
+    Without this flag the table is replaced on each run.
+```
+
+---
+
+## Superset Virtual Dataset SQL
+
+`sql_queries/superset_sql_jinja_file.sql` is the SQL behind the Superset virtual dataset that powers the Youth QApp Phoenix AEL dashboard.
+
+It joins `quest_analytics.production_users_one_record` (one row per user, produced by the main pipeline) with `quest_analytics.user_addon` (supplementary attributes).
+
+### Jinja2 Filters
+
+All dashboard filters are wired through Superset's `filter_values()` Jinja2 function. The query declares one `{% set %}` variable per filterable column and appends the corresponding `AND` clause only when the filter is active.
+
+**Plain column filters** (string `IN` list):
+
+```sql
+{% set state_name_filter = filter_values('state_name') | select('string') | list %}
+{% if state_name_filter %}
+  AND state_name IN ({{ "'" + "', '".join(state_name_filter) + "'" }})
+{% endif %}
+```
+
+**JSON array filters** (`project_combos`, `subject_combos`) use `JSON_SEARCH` to match any element in the array:
+
+```sql
+{% if prog_name_filter %}
+  AND JSON_VALID(project_combos) = 1
+  AND (
+    {% for val in prog_name_filter %}
+      JSON_SEARCH(project_combos, 'one', '{{ val }}', NULL, '$[*].prog_name') IS NOT NULL
+      {% if not loop.last %} OR {% endif %}
+    {% endfor %}
+  )
+{% endif %}
+```
+
+**Numeric filter** (`rounded_completion`) uses `| map('int')` to cast values before the `IN` clause:
+
+```sql
+{% set rounded_completion_filter = filter_values('rounded_completion') | map('int') | list %}
+{% if rounded_completion_filter %}
+  AND ROUND(a.completion_pct) IN ({{ rounded_completion_filter | join(', ') }})
+{% endif %}
+```
+
+### Adding a New Filter
+
+1. Add a `{% set %}` line using `filter_values('column_name')`.
+2. Add the corresponding `{% if %}` / `AND` clause.
+3. For JSON columns use the `JSON_SEARCH` pattern above.
+4. Create a matching filter widget in the Superset dashboard and point it at the column name.
+
+---
+
+## Superset CSS Dashboard Styling
+
+`superset_css/ael_superset.css` contains all custom CSS for the Youth QApp Phoenix AEL Superset dashboard.
+
+See `superset_css/CSS_DOCUMENTATION.md` for a full breakdown of every section, the chart ID reference table, and the guide for extending the CSS.
+
+### How to Apply
+
+1. Open the dashboard in Superset.
+2. Click **Edit dashboard** (top right).
+3. Open the **CSS** editor (three-dot menu or dedicated CSS tab depending on your Superset version).
+4. Paste the full contents of `ael_superset.css`.
+5. Click **Save**.
+
+### Key Features
+
+- **KPI glassmorphism cards** — frosted white front face (`backdrop-filter: blur(16px)`) with brand accent borders per group.
+- **Flip card effect** — hovering any KPI card squishes the front face away and springs in a dark macOS-style frosted glass back face (`backdrop-filter: blur(28px)`) showing the metric description.
+- **Brand gradients** — KPI numbers use a blue-to-orange gradient text (`#156fb5` → `#f7941d`).
+- **Section headers** — full blue gradient background with white bold text; small sub-headers rendered as uppercase pills.
+- **Dark mode compatible** — backgrounds that should flip in dark mode omit `!important` so Superset's built-in dark theme can override them.
+
+### Brand Colours
+
+| Token | Hex | Usage |
+|---|---|---|
+| Brand blue | `#156fb5` | Primary colour — headers, borders, KPI text, info icons |
+| Brand orange | `#f7941d` | Secondary colour — assessment accents, gradient end, table headers |

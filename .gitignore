@@ -2,6 +2,11 @@
 .env
 *.pem
 DB_Config/
+# ── Superset dashboard exports (keep CSS + docs, exclude exported zips/folders/PDFs) ──
+superset_css/dashboard_export*/
+superset_css/*.zip
+superset_css/*.pdf
+superset_css/*copy*
 
 # ── Python runtime ────────────────────────────────────────────
 venv/
@@ -13,6 +18,7 @@ __pycache__/
 dist/
 build/
 .eggs/
+
 
 # ── Pipeline output ───────────────────────────────────────────
 output/

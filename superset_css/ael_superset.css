@@ -1,0 +1,612 @@
+/* =================== KPI =================== */
+
+[data-test-viz-type="big_number_total"] .header-title {
+    display: none !important;
+}
+
+[data-test-viz-type="big_number_total"] .header-controls {
+    display: none !important;
+}
+
+[data-test-viz-type="big_number_total"] .header-line {
+    font-weight: 600 !important;
+    font-size: 2.5vw !important;
+    background: linear-gradient(135deg, #156fb5, #f7941d);
+    -webkit-background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    overflow: visible !important;
+    margin-bottom: 6px !important;
+    display: block !important;
+    text-align: center !important;
+    line-height: 1.1 !important;
+    width: 100% !important;
+    flex-shrink: 0 !important;
+}
+
+/* Broad selector covers both legacy and modern big number chart containers */
+[data-test-viz-type="big_number_total"] .superset-legacy-chart-big-number,
+[data-test-viz-type="big_number_total"] .chart-container {
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+    align-items: center !important;
+    height: 100% !important;
+    width: 100% !important;
+    text-align: center !important;
+    padding: 10px 8px !important;
+    box-sizing: border-box !important;
+}
+
+[data-test-viz-type="big_number_total"] .subheader-line {
+    font-size: 14px !important;
+    font-weight: 400 !important;
+    color: #156fb5 !important;
+    text-align: center !important;
+    width: 100% !important;
+    flex-shrink: 0 !important;
+    line-height: 1.3 !important;
+}
+
+/* ======== KPI Subheader custom annotations ======== */
+
+/* chart-id 1368: registered users */
+[data-test-chart-id="1368"] .subheader-line::after {
+    content: " (# of registered users)";
+    font-size: 11.5px !important;
+    color: #156fb5;
+    font-style: italic !important;
+}
+
+/* chart-id 1369: lesson completers */
+[data-test-chart-id="1369"] .subheader-line::after {
+    content: " (# of learners who complete at least one lesson)";
+    font-size: 11.5px !important;
+    color: #156fb5;
+    font-style: italic !important;
+}
+
+/* chart-id 1370: app logins */
+[data-test-chart-id="1370"] .subheader-line::after {
+    content: " (# of unique users who have logged at least once on App)";
+    font-size: 11.5px !important;
+    color: #156fb5;
+    font-style: italic !important;
+}
+
+/* ======== KPI Borders ======== */
+
+.dragdroppable-row.css-1c5yb7h:nth-of-type(2),
+.css-1vquqi .css-ng0j11,
+.dashboard-chart-id-434,
+.dashboard-chart-id-940 {
+    border: 1px solid black;
+    border-radius: 30px;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+/* ======== Chart 443 ======== */
+
+[data-test-chart-id="443"] .css-xojzyz {
+    display: none;
+}
+
+[data-test-chart-id="443"] .header-line {
+    font-weight: 600 !important;
+    color: black !important;
+}
+
+.dashboard-component-chart-holder.dashboard-chart-id-443 {
+    margin: 0;
+    padding: 0;
+}
+
+/* ======== Global ======== */
+
+/* Hide anchor links on dashboard headers */
+.dashboard-component.dashboard-component-header .anchor-link-container .fa.fa-link {
+    display: none;
+}
+
+/* Hide filter count badge */
+.filter-counts.css-1kawqy8 {
+    display: none;
+}
+
+/* Dashboard background */
+.css-1n97xmt {
+    background-color: white !important;
+}
+
+/* Link colour */
+a {
+    color: #156fb5 !important;
+}
+
+/* ======== Headers ======== */
+
+/* Tab/section header pill */
+.css-13rbkvc {
+    background: #156fb5 !important;
+    color: white !important;
+    border-radius: 30px;
+    padding: 3px;
+}
+
+/* Reduce gap between charts and headers inside tabs */
+.css-5smd5r .dashboard-component-tabs-content > div:not(:last-child):not(.empty-droptarget) {
+    margin-bottom: 5px;
+}
+
+/* ======== Table Headers ======== */
+
+/* Filter columns use brand blue */
+th.dt-is-filter {
+    background-color: #156fb5 !important;
+    color: white !important;
+}
+
+/* All other thead cells use brand orange */
+thead tr th {
+    background-color: #f7941d !important;
+    color: white !important;
+}
+
+/* ======== Bar Chart ======== */
+
+div.cell-bar.positive {
+    height: 15px;
+    border-radius: 3px;
+    margin-top: 5px;
+    overflow: hidden;
+}
+
+/* Truncate long labels with ellipsis */
+.css-zxt2xr .css-c7w8t3 {
+    position: relative;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ======== CC Slider Info ======== */
+
+.css-1u8ar8f p {
+    font-size: 11.5px !important;
+    color: #156fb5;
+    font-style: italic !important;
+}
+
+/* ==========================================================
+   LEARNERS DASHBOARD — ENHANCED STYLING
+   Colours: brand blue #156fb5 | brand orange #f7941d
+   ========================================================== */
+
+/* ── KPI card base: subtle lift effect on all big number tiles ── */
+
+[data-test-viz-type="big_number_total"] .dashboard-component-chart-holder,
+.dashboard-chart-id-2518,
+.dashboard-chart-id-2519,
+.dashboard-chart-id-2520,
+.dashboard-chart-id-2521,
+.dashboard-chart-id-2550,
+.dashboard-chart-id-2551,
+.dashboard-chart-id-2522,
+.dashboard-chart-id-2523,
+.dashboard-chart-id-2524,
+.dashboard-chart-id-2525 {
+    background: rgba(255, 255, 255, 0.78);
+    backdrop-filter: blur(16px) saturate(160%);
+    -webkit-backdrop-filter: blur(16px) saturate(160%);
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    box-shadow:
+        0 2px 12px rgba(21, 111, 181, 0.10),
+        inset 0 1px 0 rgba(255, 255, 255, 0.80);
+    transition: box-shadow 0.2s ease;
+}
+
+[data-test-viz-type="big_number_total"] .dashboard-component-chart-holder:hover,
+.dashboard-chart-id-2518:hover,
+.dashboard-chart-id-2519:hover,
+.dashboard-chart-id-2520:hover,
+.dashboard-chart-id-2521:hover,
+.dashboard-chart-id-2550:hover,
+.dashboard-chart-id-2551:hover,
+.dashboard-chart-id-2522:hover,
+.dashboard-chart-id-2523:hover,
+.dashboard-chart-id-2524:hover,
+.dashboard-chart-id-2525:hover {
+    box-shadow: 0 6px 20px rgba(21, 111, 181, 0.22);
+}
+
+/* ── Top KPI row (Registrations, Unique Logins, Access Rate, Gender Ratio) ──
+   Blue top accent bar */
+
+.dashboard-chart-id-2522,
+.dashboard-chart-id-2523,
+.dashboard-chart-id-2524,
+.dashboard-chart-id-2525 {
+    border-top: 4px solid #156fb5 !important;
+}
+
+/* ── Learning Activity — Lessons KPIs (LC, LA, LP) ──
+   Blue left accent stripe */
+
+.dashboard-chart-id-2518,
+.dashboard-chart-id-2519,
+.dashboard-chart-id-2550 {
+    border-left: 4px solid #156fb5 !important;
+    background: linear-gradient(135deg, #f0f7ff 0%, #ffffff 100%);
+}
+
+/* ── Learning Activity — Assessments KPIs (AC, AA, AP) ──
+   Orange left accent stripe */
+
+.dashboard-chart-id-2520,
+.dashboard-chart-id-2521,
+.dashboard-chart-id-2551 {
+    border-left: 4px solid #f7941d !important;
+    background: linear-gradient(135deg, #fff8f0 0%, #ffffff 100%);
+}
+
+/* ── Percentage completion tiles (LP%, AP%) — bolder highlight ── */
+
+.dashboard-chart-id-2550 .header-line,
+.dashboard-chart-id-2551 .header-line {
+    font-size: 3vw !important;
+}
+
+.dashboard-chart-id-2550 {
+    border: 2px solid #156fb5 !important;
+    border-left: 4px solid #156fb5 !important;
+}
+
+.dashboard-chart-id-2551 {
+    border: 2px solid #f7941d !important;
+    border-left: 4px solid #f7941d !important;
+}
+
+/* ── CC Slider card ── */
+
+.dashboard-chart-id-2531 {
+    background: linear-gradient(135deg, #eef5fc 0%, #fef9f4 100%) !important;
+    border-radius: 16px;
+    border: 1px dashed #156fb5;
+    box-shadow: 0 2px 10px rgba(21, 111, 181, 0.08);
+}
+
+/* ── Monthly trend charts (2529, 2530) — clean framed cards ── */
+
+.dashboard-chart-id-2529,
+.dashboard-chart-id-2530 {
+    border-radius: 16px;
+    border: 1px solid #e8e8e8;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+    overflow: hidden;
+}
+
+/* ── Location / Device / User Type charts ── */
+
+.dashboard-chart-id-2526,
+.dashboard-chart-id-2527,
+.dashboard-chart-id-2528 {
+    border-radius: 16px;
+    border: 1px solid #e8e8e8;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    overflow: hidden;
+}
+
+/* ── Details tab — completion detail tables ── */
+
+.dashboard-chart-id-2552,
+.dashboard-chart-id-2533,
+.dashboard-chart-id-2534 {
+    border-radius: 16px;
+    border: 1px solid #e0eaf5;
+    box-shadow: 0 2px 12px rgba(21, 111, 181, 0.08);
+    overflow: hidden;
+}
+
+/* ── Top 10 Subjects table (2517) ── */
+
+.dashboard-chart-id-2517 {
+    border-radius: 16px;
+    border-top: 4px solid #f7941d;
+    box-shadow: 0 4px 16px rgba(247, 148, 29, 0.12);
+    overflow: hidden;
+}
+
+/* ── Section headers: "Learning Activity", "Access and Engagement" — full background ── */
+
+.dashboard-component-header:not(:has(.header-small)) {
+    background: linear-gradient(90deg, #156fb5, #2a9fd6) !important;
+    border-radius: 10px !important;
+    padding: 10px 18px !important;
+    border-bottom: none !important;
+    border-image: none !important;
+    margin-bottom: 8px !important;
+}
+
+.dashboard-component-header:not(:has(.header-small)) h3,
+.dashboard-component-header:not(:has(.header-small)) span,
+.dashboard-component-header:not(:has(.header-small)) .header-title,
+.dashboard-component-header:not(:has(.header-small)) .header-title * {
+    color: white !important;
+    -webkit-text-fill-color: white !important;
+    background: none !important;
+    -webkit-background-clip: unset !important;
+    background-clip: unset !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.3px;
+}
+
+/* Also hide the anchor link icon inside section headers */
+.dashboard-component-header:not(:has(.header-small)) .anchor-link-container {
+    display: none !important;
+}
+
+/* ── Small sub-headers container: "Lessons", "Assessments" — remove stray border, center pill ── */
+
+.dashboard-component-header:has(.header-small) {
+    background: transparent !important;
+    border-bottom: none !important;
+    border-image: none !important;
+    padding: 0 !important;
+    margin-bottom: 4px !important;
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+}
+
+/* ── Small sub-header pill ── */
+
+.header-small {
+    display: inline-block !important;
+    background-color: #156fb5 !important;
+    color: white !important;
+    padding: 4px 18px !important;
+    border-radius: 20px !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.8px !important;
+    text-transform: uppercase !important;
+    text-align: center !important;
+}
+
+/* ── KPI Card Flip Effect ── */
+
+/* Step 1: card container */
+.dashboard-chart-id-2522,
+.dashboard-chart-id-2523,
+.dashboard-chart-id-2524,
+.dashboard-chart-id-2525,
+.dashboard-chart-id-2518,
+.dashboard-chart-id-2519,
+.dashboard-chart-id-2550,
+.dashboard-chart-id-2520,
+.dashboard-chart-id-2521,
+.dashboard-chart-id-2551,
+.dashboard-chart-id-2531 {
+    position: relative !important;
+    cursor: pointer;
+    overflow: visible !important;
+}
+
+/* Step 2: front face — all direct children squish away on hover */
+.dashboard-chart-id-2522 > *,
+.dashboard-chart-id-2523 > *,
+.dashboard-chart-id-2524 > *,
+.dashboard-chart-id-2525 > *,
+.dashboard-chart-id-2518 > *,
+.dashboard-chart-id-2519 > *,
+.dashboard-chart-id-2550 > *,
+.dashboard-chart-id-2520 > *,
+.dashboard-chart-id-2521 > *,
+.dashboard-chart-id-2551 > *,
+.dashboard-chart-id-2531 > * {
+    transition: transform 0.25s ease, opacity 0.2s ease;
+    transform-origin: center;
+    transform: scaleX(1);
+    opacity: 1;
+}
+
+.dashboard-chart-id-2522:hover > *,
+.dashboard-chart-id-2523:hover > *,
+.dashboard-chart-id-2524:hover > *,
+.dashboard-chart-id-2525:hover > *,
+.dashboard-chart-id-2518:hover > *,
+.dashboard-chart-id-2519:hover > *,
+.dashboard-chart-id-2550:hover > *,
+.dashboard-chart-id-2520:hover > *,
+.dashboard-chart-id-2521:hover > *,
+.dashboard-chart-id-2551:hover > *,
+.dashboard-chart-id-2531:hover > * {
+    transform: scaleX(0);
+    opacity: 0;
+}
+
+/* Step 3: info icon (::before) — fades out as card flips */
+.dashboard-chart-id-2522::before,
+.dashboard-chart-id-2523::before,
+.dashboard-chart-id-2524::before,
+.dashboard-chart-id-2525::before,
+.dashboard-chart-id-2518::before,
+.dashboard-chart-id-2519::before,
+.dashboard-chart-id-2550::before,
+.dashboard-chart-id-2520::before,
+.dashboard-chart-id-2521::before,
+.dashboard-chart-id-2551::before,
+.dashboard-chart-id-2531::before {
+    content: "i";
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 18px;
+    height: 18px;
+    line-height: 18px;
+    text-align: center;
+    background: #156fb5;
+    color: white;
+    border-radius: 50%;
+    font-size: 11px;
+    font-family: Georgia, serif;
+    font-style: italic;
+    font-weight: bold;
+    z-index: 10;
+    opacity: 0.65;
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+}
+
+.dashboard-chart-id-2522:hover::before,
+.dashboard-chart-id-2523:hover::before,
+.dashboard-chart-id-2524:hover::before,
+.dashboard-chart-id-2525:hover::before,
+.dashboard-chart-id-2518:hover::before,
+.dashboard-chart-id-2519:hover::before,
+.dashboard-chart-id-2550:hover::before,
+.dashboard-chart-id-2520:hover::before,
+.dashboard-chart-id-2521:hover::before,
+.dashboard-chart-id-2551:hover::before,
+.dashboard-chart-id-2531:hover::before {
+    opacity: 0;
+}
+
+/* Step 4: back face (::after) — macOS frosted glass style */
+.dashboard-chart-id-2522::after,
+.dashboard-chart-id-2523::after,
+.dashboard-chart-id-2524::after,
+.dashboard-chart-id-2525::after,
+.dashboard-chart-id-2518::after,
+.dashboard-chart-id-2519::after,
+.dashboard-chart-id-2550::after,
+.dashboard-chart-id-2520::after,
+.dashboard-chart-id-2521::after,
+.dashboard-chart-id-2551::after,
+.dashboard-chart-id-2531::after {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 18px;
+    padding: 14px 16px;
+    text-align: center;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.7;
+    letter-spacing: 0.2px;
+    white-space: normal;
+    color: rgba(255, 255, 255, 0.95) !important;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+
+    /* Frosted glass base — dark navy tinted smoked glass */
+    background:
+        linear-gradient(
+            155deg,
+            rgba(255, 255, 255, 0.10) 0%,
+            rgba(255, 255, 255, 0.04) 30%,
+            transparent 55%
+        ),
+        rgba(8, 22, 52, 0.82);
+    backdrop-filter: blur(28px) saturate(180%);
+    -webkit-backdrop-filter: blur(28px) saturate(180%);
+
+    /* Glass edge + inner top glow */
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    box-shadow:
+        0 18px 50px rgba(0, 0, 0, 0.32),
+        0 4px 14px rgba(0, 0, 0, 0.18),
+        inset 0 1px 0 rgba(255, 255, 255, 0.24),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.12);
+
+    transform: scaleX(0);
+    opacity: 0;
+    transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) 0.20s,
+                opacity 0.22s ease 0.20s;
+    transform-origin: center;
+    z-index: 20;
+    pointer-events: none;
+}
+
+.dashboard-chart-id-2522:hover::after,
+.dashboard-chart-id-2523:hover::after,
+.dashboard-chart-id-2524:hover::after,
+.dashboard-chart-id-2525:hover::after,
+.dashboard-chart-id-2518:hover::after,
+.dashboard-chart-id-2519:hover::after,
+.dashboard-chart-id-2550:hover::after,
+.dashboard-chart-id-2520:hover::after,
+.dashboard-chart-id-2521:hover::after,
+.dashboard-chart-id-2551:hover::after,
+.dashboard-chart-id-2531:hover::after {
+    transform: scaleX(1);
+    opacity: 1;
+}
+
+/* Step 5: back face content per chart
+   Structure: EMOJI  ALL-CAPS TITLE\A (separator)\A description
+   Note: CSS string concat ("a" "b") used so \A at end of string
+   is a clean newline with no bleed into the next word's first letter */
+.dashboard-chart-id-2522::after {
+    content: "📋  ACCESSED\A" "─────────────\A" "Total unique users who\Asuccessfully registered on QuestApp";
+    white-space: pre-line;
+}
+.dashboard-chart-id-2524::after {
+    content: "🔑  UNIQUE LOGINS\A" "─────────────\A" "Unique users who logged in\A" "at least once on the app";
+    white-space: pre-line;
+}
+.dashboard-chart-id-2523::after {
+    content: "✅  ENGAGED\A" "─────────────\A" "Unique users who completed\A" "at least one lesson";
+    white-space: pre-line;
+}
+.dashboard-chart-id-2525::after {
+    content: "⚖️  GENDER RATIO\A" "─────────────\A" "Females registered\Aper 100 males";
+    white-space: pre-line;
+}
+.dashboard-chart-id-2518::after {
+    content: "📘  AVG LESSONS COMPLETED\A" "─────────────\A" "Avg lessons completed per\Alearner who accessed the toolkit";
+    white-space: pre-line;
+}
+.dashboard-chart-id-2519::after {
+    content: "📚  AVG LESSONS ALLOCATED\A" "─────────────\A" "Avg lessons in the toolkit\Aper learner who accessed it";
+    white-space: pre-line;
+}
+.dashboard-chart-id-2550::after {
+    content: "📊  LESSONS COMPLETION %\A" "─────────────\A" "Avg lessons completed\A÷ Avg lessons allocated";
+    white-space: pre-line;
+}
+.dashboard-chart-id-2520::after {
+    content: "📝  AVG ASSESSMENTS COMPLETED\A" "─────────────\A" "Avg assessments completed per\Alearner who accessed the toolkit";
+    white-space: pre-line;
+}
+.dashboard-chart-id-2521::after {
+    content: "📋  AVG ASSESSMENTS ALLOCATED\A" "─────────────\A" "Avg assessments in the toolkit\Aper learner who accessed it";
+    white-space: pre-line;
+}
+.dashboard-chart-id-2551::after {
+    content: "📊  ASSESSMENT COMPLETION %\A" "─────────────\A" "Avg assessments completed\A÷ Avg assessments allocated";
+    white-space: pre-line;
+}
+.dashboard-chart-id-2531::after {
+    content: "🎯  CC SLIDER\A" "─────────────\A"
+             "# of learners who completed x%\Aof lessons &\A"
+             "assessments.\A"
+             "← 0%  ·  100% →";
+    white-space: pre-line;
+    font-size: 11.5px;
+}
+
+/* ── Refresh / Last Update row (2547) ── */
+
+.dashboard-chart-id-2547 {
+    background: #f8f9fa !important;
+    border-radius: 10px;
+    border: 1px solid #dee2e6;
+    font-size: 12px;
+    color: #6c757d;
+}
