@@ -161,6 +161,38 @@ For incremental refreshes, use `--incremental-users`. The runner reads the cutof
 
 ## Run The Pipeline
 
+### Which Command Should I Run?
+
+Use one run mode at a time:
+
+| Scenario | Command mode | Duplicate protection |
+|---|---|---|
+| Build table from scratch for a centre list | `--centre-sql-path ... --replace-target` | Recreates target table |
+| Resume centre processing into an existing table | `--centre-sql-path ... --skip-existing` | Skips centres already in target |
+| Refresh a known list of users | `--user-sql-path ... --replace-existing-users` | Deletes and reinserts those users |
+| Automatically refresh recently changed users | `--incremental-users` | Deletes and reinserts changed users |
+
+`--incremental-users` cannot be combined with `--centre-sql-path`. Centre refresh handles centre allocation changes. Incremental user refresh handles newly registered users and recent learning activity.
+
+Recommended daily incremental user refresh:
+
+```bash
+python3 run_production_users_by_centre.py \
+  --target-table production_users_one_record \
+  --workers 1 \
+  --incremental-users
+```
+
+Recommended centre resume run:
+
+```bash
+python3 run_production_users_by_centre.py \
+  --centre-sql-path sql_queries/centre_ids.sql \
+  --target-table production_users_one_record \
+  --workers 2 \
+  --skip-existing
+```
+
 Run with the example centre list and recreate the destination table on the first non-empty result:
 
 ```bash
@@ -337,6 +369,8 @@ With this option, the runner checks the destination table before processing:
 ## Incremental User Refresh
 
 Use incremental user refresh when you only want to update users who recently registered or recently created learning activity.
+
+Do not combine this with `--centre-sql-path`. If centre allocation changed, run a centre refresh separately with a centre list and `--skip-existing` or `--replace-target` depending on whether you are resuming or rebuilding.
 
 The runner does this in two separate database calls:
 
