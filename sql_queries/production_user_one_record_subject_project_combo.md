@@ -932,12 +932,23 @@ python3 run_production_users_by_centre.py \
 
 ### User-by-user runs
 
+Use this for an explicit user list where users should only be processed if they are not already present:
+
 ```bash
 python3 run_production_users_by_centre.py \
   --user-sql-path sql_queries/user_ids.sql \
   --target-table production_users_one_record \
   --workers 2 \
   --skip-existing
+```
+
+Use this for incremental learning-activity refreshes where existing users must be refreshed without creating duplicate user rows:
+
+```bash
+python3 run_production_users_by_centre.py \
+  --target-table production_users_one_record \
+  --workers 1 \
+  --incremental-users
 ```
 
 ## Maintenance Checklist

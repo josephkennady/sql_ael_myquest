@@ -157,6 +157,8 @@ WHERE u.id IN (
 
 That file is ignored by Git for the same reason as `centre_ids.sql`.
 
+For incremental refreshes, use `--incremental-users`. The runner reads the cutoff from the destination DB first, then queries changed users from the source DB. This is needed because the source and destination schemas are on different database connections.
+
 ## Run The Pipeline
 
 Run with the example centre list and recreate the destination table on the first non-empty result:
@@ -222,13 +224,22 @@ python3 run_production_users_by_centre.py \
   --replace-target
 ```
 
-Run with your local user-list SQL:
+Run with your local user-list SQL and replace the whole target table:
 
 ```bash
 python3 run_production_users_by_centre.py \
   --user-sql-path sql_queries/user_ids.sql \
   --target-table production_users_one_record \
   --replace-target
+```
+
+Run an incremental user refresh without duplicates:
+
+```bash
+python3 run_production_users_by_centre.py \
+  --target-table production_users_one_record \
+  --workers 1 \
+  --incremental-users
 ```
 
 ## Command Options
@@ -243,14 +254,21 @@ python3 run_production_users_by_centre.py \
 
 --user-sql-path
     Optional SQL file that returns user IDs in the first column.
-    Cannot be used together with --centre-sql-path.
+    Cannot be used together with --centre-sql-path or --incremental-users.
+
+--incremental-users
+    Build the user ID list automatically.
+    Reads MAX(created_at) from the destination table, subtracts the configured overlap,
+    then queries changed users from the source users and activity tables.
+    Automatically deletes and replaces existing rows for changed users.
+    Cannot be used with --replace-target or --skip-existing.
 
 --target-table
     Destination table name.
     Default: production_users_one_record
 
 --limit
-    Number of centres to process when neither --centre-sql-path nor --user-sql-path is provided.
+    Number of centres to process when no ID mode is provided.
     Default: 10
     Use 0 to process all centres.
 
@@ -268,11 +286,22 @@ python3 run_production_users_by_centre.py \
     In centre mode, checks centre_id.
     In user mode, checks user_id.
     Cannot be used with --replace-target.
+    Do not use this for incremental learning-activity refreshes because existing users with new activity must be refreshed.
 
 --retries
     Number of retries for a failed centre/user source query.
     Default: 1
     A failed ID is skipped after all retry attempts are exhausted.
+
+--replace-existing-users
+    Only valid with --user-sql-path.
+    Deletes existing destination rows for each user before inserting the refreshed result.
+    Use this for manual user-list refreshes to avoid duplicate user rows.
+    Cannot be used with --replace-target or --skip-existing.
+
+--incremental-overlap-minutes
+    Safety overlap in minutes for --incremental-users cutoff.
+    Default: 5
 ```
 
 ## Rerun Behaviour
@@ -305,6 +334,42 @@ With this option, the runner checks the destination table before processing:
 - IDs already present are skipped
 - IDs not present are processed and appended
 
+## Incremental User Refresh
+
+Use incremental user refresh when you only want to update users who recently registered or recently created learning activity.
+
+The runner does this in two separate database calls:
+
+1. Destination DB: reads `MAX(created_at)` from the target table and subtracts a 5 minute safety overlap.
+2. Source DB: finds users created after that cutoff, or users with learner/facilitator activity created after that cutoff.
+
+Then run:
+
+```bash
+python3 run_production_users_by_centre.py \
+  --target-table production_users_one_record \
+  --workers 1 \
+  --incremental-users
+```
+
+Use a larger overlap if needed:
+
+```bash
+python3 run_production_users_by_centre.py \
+  --target-table production_users_one_record \
+  --workers 1 \
+  --incremental-users \
+  --incremental-overlap-minutes 10
+```
+
+Why incremental mode deletes and replaces existing users:
+
+- some users already exist in `production_users_one_record`
+- those users may now have new learning activity
+- `--skip-existing` would skip them and miss updates
+- plain append would create duplicate `user_id` rows
+- incremental mode deletes each affected user's old row first, then inserts the refreshed row
+
 ## Parallel Runs
 
 Use `--workers` to run multiple centre or user queries in parallel. Workers only read from the source database. Writes to the destination table are still handled by the main process so `--replace-target` is applied once and all rows go into the same target table.
@@ -324,7 +389,7 @@ The repository is configured to avoid committing local secrets:
 - `.env` is ignored.
 - `*.pem` is ignored.
 - `DB_Config/` is ignored.
-- `sql_queries/centre_ids.sql` and `sql_queries/user_ids.sql` are ignored because local ID-list queries may include real IDs.
+- `sql_queries/centre_ids.sql`, `sql_queries/user_ids.sql`, and `sql_queries/user_ids_incremental.sql` are ignored because local ID-list queries may include real IDs.
 - Generated outputs under `output/` are ignored.
 
 Before pushing to GitHub, check:

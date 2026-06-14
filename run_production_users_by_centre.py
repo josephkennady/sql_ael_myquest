@@ -9,7 +9,7 @@ import pandas as pd
 import pymysql
 
 from config import ANALYTICS_DB, SOURCE_DB
-from db import TunnelPool, fetch, write_table
+from db import TunnelPool, fetch, write_table, write_table_with_conn
 
 
 DEFAULT_SQL_PATH = Path("sql_queries/production_user_one_record_subject_project_combo.sql")
@@ -18,6 +18,7 @@ DEFAULT_CENTRE_QUERY = """
 SELECT c.id
 FROM centres c
 """
+DEFAULT_INCREMENTAL_OVERLAP_MINUTES = 5
 
 
 PARAM_REPLACEMENTS = {
@@ -93,6 +94,72 @@ LIMIT {int(limit)}
     return list(dict.fromkeys(ids[id_column].dropna().astype(str).tolist()))
 
 
+def get_incremental_cutoff(target_table: str, overlap_minutes: int) -> str:
+    if overlap_minutes < 0:
+        raise ValueError("--incremental-overlap-minutes must be 0 or greater")
+
+    table_sql = _quote_identifier(target_table)
+    sql = f"""
+SELECT DATE_SUB(
+    COALESCE(MAX(CAST(created_at AS DATETIME)), '1970-01-01 00:00:00'),
+    INTERVAL %s MINUTE
+) AS cutoff_at
+FROM {table_sql}
+"""
+    try:
+        result = fetch(ANALYTICS_DB, sql, (overlap_minutes,))
+    except pymysql.err.ProgrammingError as exc:
+        if exc.args[0] == 1146:
+            logging.info(
+                "Target table %s does not exist yet; incremental cutoff starts from 1970.",
+                target_table,
+            )
+            return "1970-01-01 00:00:00"
+        raise
+
+    cutoff = result["cutoff_at"].iloc[0]
+    if pd.isna(cutoff):
+        return "1970-01-01 00:00:00"
+    return str(cutoff)
+
+
+def get_incremental_user_ids(target_table: str, overlap_minutes: int) -> list[str]:
+    cutoff_at = get_incremental_cutoff(target_table, overlap_minutes)
+    logging.info(
+        "Incremental user refresh cutoff: %s (%d minute overlap)",
+        cutoff_at,
+        overlap_minutes,
+    )
+    sql = """
+SELECT DISTINCT user_id AS id
+FROM (
+    SELECT u.id AS user_id
+    FROM users AS u
+    WHERE u.created_at >= %s
+      AND u.status = 1
+      AND u.deleted_at IS NULL
+
+    UNION
+
+    SELECT la.user_id
+    FROM learning_activities AS la
+    WHERE la.created_at >= %s
+      AND la.user_id IS NOT NULL
+
+    UNION
+
+    SELECT fla.user_id
+    FROM facilitator_learning_activities AS fla
+    WHERE fla.created_at >= %s
+      AND fla.user_id IS NOT NULL
+) changed_user_ids
+WHERE user_id IS NOT NULL
+ORDER BY user_id
+"""
+    ids = fetch(SOURCE_DB, sql, (cutoff_at, cutoff_at, cutoff_at))
+    return list(dict.fromkeys(ids["id"].dropna().astype(str).tolist()))
+
+
 def get_existing_ids(target_table: str, id_type: str, ids: list[str]) -> set[str]:
     table_sql = _quote_identifier(target_table)
     id_column_sql = _quote_identifier(f"{id_type}_id")
@@ -117,6 +184,39 @@ WHERE {id_column_sql} IN ({placeholders})
         existing_ids.update(existing["id"].dropna().astype(str).tolist())
 
     return existing_ids
+
+
+def replace_existing_id_rows(target_table: str, id_type: str, id_value: str, result: pd.DataFrame) -> int:
+    from db import _connect_or_pool
+
+    table_sql = _quote_identifier(target_table)
+    id_column_sql = _quote_identifier(f"{id_type}_id")
+    delete_sql = f"DELETE FROM {table_sql} WHERE {id_column_sql} = %s"
+
+    try:
+        with _connect_or_pool(ANALYTICS_DB) as conn:
+            with conn.cursor() as cur:
+                cur.execute(delete_sql, (id_value,))
+                deleted = cur.rowcount
+
+            if result.empty:
+                conn.commit()
+            else:
+                write_table_with_conn(
+                    conn,
+                    ANALYTICS_DB["db"]["database"],
+                    result,
+                    target_table,
+                    if_exists="append",
+                )
+    except pymysql.err.ProgrammingError as exc:
+        if exc.args[0] == 1146:
+            logging.info("Target table %s does not exist yet; creating it from refreshed rows.", target_table)
+            if not result.empty:
+                write_table(ANALYTICS_DB, result, target_table, if_exists="replace")
+            return 0
+        raise
+    return deleted
 
 
 def get_user_counts_by_id(id_type: str, ids: list[str]) -> dict[str, int]:
@@ -239,6 +339,9 @@ def run(
     workers: int,
     skip_existing: bool,
     retries: int,
+    replace_existing_users: bool,
+    incremental_users: bool,
+    incremental_overlap_minutes: int,
 ) -> None:
     if workers < 1:
         raise ValueError("--workers must be 1 or greater")
@@ -246,9 +349,21 @@ def run(
         raise ValueError("--retries must be 0 or greater")
     if replace_target and skip_existing:
         raise ValueError("--skip-existing cannot be used with --replace-target")
+    if replace_existing_users and user_sql_path is None:
+        raise ValueError("--replace-existing-users can only be used with --user-sql-path")
+    if replace_existing_users and skip_existing:
+        raise ValueError("--replace-existing-users cannot be used with --skip-existing")
+    if replace_existing_users and replace_target:
+        raise ValueError("--replace-existing-users cannot be used with --replace-target")
+    if incremental_users and (replace_target or skip_existing):
+        raise ValueError("--incremental-users cannot be used with --replace-target or --skip-existing")
 
     sql_template = sql_path.read_text()
-    if user_sql_path is not None:
+    if incremental_users:
+        id_type = "user"
+        ids = get_incremental_user_ids(target_table, incremental_overlap_minutes)
+        replace_existing_users = True
+    elif user_sql_path is not None:
         id_type = "user"
         ids = get_ids(user_sql_path, None, None)
     else:
@@ -331,12 +446,29 @@ def run(
                 log_progress(id_value)
                 return
 
+            if replace_existing_users:
+                deleted = replace_existing_id_rows(target_table, id_type, id_value, result)
+                logging.info(
+                    "Replaced %s %s in %s after deleting %d existing rows",
+                    id_type,
+                    id_value,
+                    target_table,
+                    deleted,
+                )
+                if result.empty:
+                    logging.info("%s %s returned no rows after deleting stale rows.", id_type.title(), id_value)
+                else:
+                    logging.info("Wrote %d refreshed rows for %s %s", len(result), id_type, id_value)
+                log_progress(id_value)
+                return
+
             if result.empty:
                 logging.info("%s %s returned no rows. Skipping write.", id_type.title(), id_value)
                 log_progress(id_value)
                 return
 
             if_exists = "append" if target_created else "replace"
+
             logging.info(
                 "Writing %d rows for %s %d/%d: %s",
                 len(result),
@@ -414,6 +546,14 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional SQL file that returns user IDs in the first column.",
     )
+    id_group.add_argument(
+        "--incremental-users",
+        action="store_true",
+        help=(
+            "Build the user ID list automatically from destination max created_at "
+            "and recent source users/activity. Automatically replaces existing user rows."
+        ),
+    )
     parser.add_argument(
         "--limit",
         type=int,
@@ -448,9 +588,37 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="Number of retries for a failed centre/user source query. Default: 1.",
     )
+    parser.add_argument(
+        "--replace-existing-users",
+        action="store_true",
+        help=(
+            "For --user-sql-path incremental refreshes, delete existing target rows "
+            "for each user before inserting refreshed rows. Cannot be used with "
+            "--replace-target or --skip-existing."
+        ),
+    )
+    parser.add_argument(
+        "--incremental-overlap-minutes",
+        type=int,
+        default=DEFAULT_INCREMENTAL_OVERLAP_MINUTES,
+        help=(
+            "Safety overlap in minutes for --incremental-users cutoff. "
+            f"Default: {DEFAULT_INCREMENTAL_OVERLAP_MINUTES}."
+        ),
+    )
     args = parser.parse_args()
     if args.replace_target and args.skip_existing:
         parser.error("--skip-existing cannot be used with --replace-target")
+    if args.replace_existing_users and args.user_sql_path is None:
+        parser.error("--replace-existing-users can only be used with --user-sql-path")
+    if args.replace_existing_users and args.skip_existing:
+        parser.error("--replace-existing-users cannot be used with --skip-existing")
+    if args.replace_existing_users and args.replace_target:
+        parser.error("--replace-existing-users cannot be used with --replace-target")
+    if args.incremental_users and (args.replace_target or args.skip_existing):
+        parser.error("--incremental-users cannot be used with --replace-target or --skip-existing")
+    if args.incremental_overlap_minutes < 0:
+        parser.error("--incremental-overlap-minutes must be 0 or greater")
     return args
 
 
@@ -467,4 +635,7 @@ if __name__ == "__main__":
         workers=args.workers,
         skip_existing=args.skip_existing,
         retries=args.retries,
+        replace_existing_users=args.replace_existing_users,
+        incremental_users=args.incremental_users,
+        incremental_overlap_minutes=args.incremental_overlap_minutes,
     )
