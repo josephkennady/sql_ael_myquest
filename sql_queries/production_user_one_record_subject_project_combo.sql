@@ -11,6 +11,24 @@ Important:
 Single-statement version. Edit filter values inside the params CTE.
 Use CAST(NULL AS CHAR(36)) for no filter.
 */
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- PARAMS CTE — runtime filter injection
+--
+-- This CTE is the single control point for all query filters.
+-- The Python runner replaces NULL values with real IDs before execution.
+-- Leave all unused filters as NULL — the downstream CTEs handle NULL as
+-- "no filter applied" (i.e. return all rows for that dimension).
+--
+-- How the Python runner injects values (run_production_users_by_centre.py):
+--   Centre mode:  centre_id = <current centre UUID>,  user_id = NULL
+--   User mode:    user_id   = <current user UUID>,    centre_id = NULL
+--   All others remain NULL unless explicitly passed.
+--
+-- To test this query manually in a SQL client, replace NULL with a real ID:
+--   CAST('your-uuid-here' AS CHAR(36)) COLLATE utf8mb4_unicode_ci AS centre_id
+-- ─────────────────────────────────────────────────────────────────────────────
+
 WITH
 params AS (
     SELECT

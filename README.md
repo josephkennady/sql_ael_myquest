@@ -419,13 +419,96 @@ Why incremental mode deletes and replaces existing users:
 
 Use `--workers` to run multiple centre or user queries in parallel. Workers only read from the source database. Writes to the destination table are still handled by the main process so `--replace-target` is applied once and all rows go into the same target table.
 
-Recommended starting values:
+The real bottleneck is the SSH tunnel and RDS query time, not the host CPU. Check available cores and memory on your server before choosing a worker count:
 
-- `--workers 1`: safest, original sequential behavior
-- `--workers 2`: conservative parallel run
-- `--workers 4`: faster for larger centre lists if the DB and SSH tunnel can handle it
+```bash
+nproc                                        # total CPU cores
+lscpu | grep -E 'CPU\(s\)|Thread|Core'      # core/thread detail
+free -h                                      # available RAM
+top                                          # live CPU and memory load
+```
+
+Recommended worker counts based on connection type:
+
+| Connection type | Recommended workers |
+|---|---|
+| SSH tunnel through bastion | `4` to `8` |
+| Direct VPC access (`DB_DIRECT=1`) | `8` to `16` |
+
+Safe progression for a new server — increase until you see SSH timeout or MySQL temp table errors, then step back down:
+
+```
+--workers 4  →  watch logs for errors  →  if clean
+--workers 6  →  watch logs for errors  →  if clean
+--workers 8  →  likely sweet spot for bastion-tunnelled connections
+```
+
+Worker count by run type:
+
+| Run type | Workers recommendation | Reason |
+|---|---|---|
+| Daily incremental (`--incremental-users`) | `4` | Changed-user list is small on daily runs |
+| Incremental after a multi-day gap | `8` | Larger backlog benefits from parallelism |
+| Full centre rebuild (`--replace-target`) | `8` | Biggest gains here — hundreds of centres |
+| Resume centre run (`--skip-existing`) | `8` | Same as full rebuild |
+
+If the server has direct network access to the RDS endpoint (inside the same VPC), set `DB_DIRECT=1` in `.env` to skip the SSH tunnel entirely. Each worker then gets its own independent MySQL connection, which is faster and tolerates higher worker counts.
 
 Avoid high worker counts unless the source database and bastion have enough capacity.
+
+## Scheduled Runs (Cron)
+
+For production servers, set up a daily cron job to run the incremental refresh automatically.
+
+### Daily Incremental Refresh
+
+```bash
+crontab -e
+```
+
+Add this line (runs at 2:00 AM every day):
+
+```
+0 2 * * * cd /path/to/pipeline && python3 run_production_users_by_centre.py --target-table production_users_one_record --workers 4 --incremental-users >> logs/incremental_$(date +\%Y\%m\%d).log 2>&1
+```
+
+This logs each run to a dated file under `logs/`. The `logs/` directory is gitignored.
+
+Create the logs directory if it does not exist:
+
+```bash
+mkdir -p /path/to/pipeline/logs
+```
+
+### Verify the Cron Job
+
+```bash
+crontab -l                         # list all scheduled jobs
+tail -f logs/incremental_*.log     # follow the latest log during a run
+```
+
+### Workers for Incremental vs Full Rebuild
+
+Use `--workers 4` for daily incremental runs. The changed-user list is small on a daily cadence so higher workers add little benefit. Use `--workers 8` for a full centre rebuild or when catching up after several missed days:
+
+```bash
+# Daily incremental (cron)
+python3 run_production_users_by_centre.py \
+  --target-table production_users_one_record \
+  --workers 4 \
+  --incremental-users
+
+# Full rebuild or large backlog
+python3 run_production_users_by_centre.py \
+  --centre-sql-path sql_queries/centre_ids.sql \
+  --target-table production_users_one_record \
+  --workers 8 \
+  --skip-existing
+```
+
+### Do Not Use `--skip-existing` with `--incremental-users`
+
+Incremental mode finds users who already exist in the destination table but have new learning activity. It deletes their old row and inserts a fresh one. Adding `--skip-existing` would cause those users to be skipped entirely, leaving stale data in the table. Never combine the two flags.
 
 ## Sensitive Information Policy
 
