@@ -30,16 +30,57 @@ import os
 import smtplib
 import subprocess
 import sys
+import threading
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
+import psutil
 from dotenv import load_dotenv
 
 load_dotenv()
 
 LOGS_DIR = Path("logs")
 LOGS_DIR.mkdir(exist_ok=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# System monitor — background thread logs CPU + RAM on a fixed interval
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _fmt_bytes(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024:
+            return f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} TB"
+
+
+def log_system_stats(label: str = "") -> None:
+    cpu = psutil.cpu_percent(interval=1)
+    mem = psutil.virtual_memory()
+    swap = psutil.swap_memory()
+    tag = f" [{label}]" if label else ""
+    logging.info(
+        "[SYSTEM%s] CPU: %.1f%%  |  RAM: %s / %s (%.1f%% used)  |  Swap: %s / %s (%.1f%% used)",
+        tag,
+        cpu,
+        _fmt_bytes(mem.used), _fmt_bytes(mem.total), mem.percent,
+        _fmt_bytes(swap.used), _fmt_bytes(swap.total), swap.percent,
+    )
+
+
+def _monitor_loop(stop_event: threading.Event, interval: int) -> None:
+    while not stop_event.wait(interval):
+        log_system_stats()
+
+
+def start_monitor(interval: int = 30) -> threading.Event:
+    """Start background system monitor. Returns the stop event to call .set() on."""
+    stop_event = threading.Event()
+    t = threading.Thread(target=_monitor_loop, args=(stop_event, interval), daemon=True)
+    t.start()
+    return stop_event
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -173,6 +214,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip sending the email report even if SMTP is configured.",
     )
+    parser.add_argument(
+        "--monitor-interval",
+        type=int,
+        default=30,
+        help="Seconds between system resource log lines. Default: 30",
+    )
     return parser.parse_args()
 
 
@@ -187,6 +234,10 @@ def main() -> None:
     logging.info("Target table : %s", args.target_table)
     logging.info("Workers      : %d", args.workers)
     logging.info("Dry run      : %s", args.dry_run)
+    logging.info("Monitor      : every %ds", args.monitor_interval)
+
+    log_system_stats("startup")
+    stop_monitor = start_monitor(args.monitor_interval)
 
     python = sys.executable
     results: dict[str, bool] = {}
@@ -199,6 +250,7 @@ def main() -> None:
         "--incremental-users",
     ]
     results["1. Incremental refresh"] = run_step("1. Incremental refresh", step1_cmd)
+    log_system_stats("after step 1")
 
     # ── Step 2: User addon attributes ───────────────────────────────────────
     step2_cmd = [
@@ -206,6 +258,7 @@ def main() -> None:
         "--target-table", "user_addon",
     ]
     results["2. User addon"] = run_step("2. User addon", step2_cmd)
+    log_system_stats("after step 2")
 
     # ── Step 3: Cleanup inactive users / centres ─────────────────────────────
     step3_cmd = [
@@ -215,6 +268,8 @@ def main() -> None:
     if args.dry_run:
         step3_cmd.append("--dry-run")
     results["3. Cleanup inactive"] = run_step("3. Cleanup inactive", step3_cmd)
+
+    stop_monitor.set()
 
     # ── Summary ──────────────────────────────────────────────────────────────
     logging.info("=" * 70)
@@ -229,6 +284,7 @@ def main() -> None:
 
     overall = "SUCCESS" if all_passed else "FAILED"
     logging.info("Overall: %s", overall)
+    log_system_stats("shutdown")
     logging.info("Log saved to: %s", log_path)
 
     # ── Email report ─────────────────────────────────────────────────────────
