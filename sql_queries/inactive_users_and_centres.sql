@@ -1,6 +1,6 @@
 -- Inactive users: status changed or soft-deleted
 SELECT
-    id AS user_id
+    id
     -- status,
     -- deleted_at
 FROM
@@ -11,7 +11,7 @@ WHERE
 
 -- Inactive centres: status changed or soft-deleted
 SELECT
-    id AS centre_id
+    id
     -- status,
     -- deleted_at
 FROM
@@ -28,7 +28,7 @@ WHERE
 
 -- Remove rows where the user itself is now inactive or deleted
 DELETE FROM production_users_one_record
-WHERE id IN (
+WHERE user_id IN (
     SELECT id
     FROM users
     WHERE status != 1
