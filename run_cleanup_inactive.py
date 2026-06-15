@@ -105,7 +105,7 @@ def main() -> None:
     inactive_centre_ids = get_inactive_ids(INACTIVE_CENTRES_SQL, "centres")
 
     deleted_users = delete_in_chunks(
-        args.target_table, "id", inactive_user_ids, args.dry_run
+        args.target_table, "user_id", inactive_user_ids, args.dry_run
     )
     deleted_centres = delete_in_chunks(
         args.target_table, "centre_id", inactive_centre_ids, args.dry_run

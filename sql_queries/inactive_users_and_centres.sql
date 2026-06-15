@@ -1,6 +1,6 @@
 -- Inactive users: status changed or soft-deleted
 SELECT
-    id
+    id AS user_id
     -- status,
     -- deleted_at
 FROM
@@ -11,7 +11,7 @@ WHERE
 
 -- Inactive centres: status changed or soft-deleted
 SELECT
-    id
+    id AS centre_id
     -- status,
     -- deleted_at
 FROM
