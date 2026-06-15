@@ -18,7 +18,7 @@ DEFAULT_CENTRE_QUERY = """
 SELECT c.id
 FROM centres c
 """
-DEFAULT_INCREMENTAL_OVERLAP_MINUTES = 5
+DEFAULT_INCREMENTAL_OVERLAP_MINUTES = 15 # Default 15 minute overlap
 
 
 PARAM_REPLACEMENTS = {
@@ -44,7 +44,7 @@ def _quote_identifier(identifier: str) -> str:
 
 def _replace_param(sql: str, param_name: str, replacement_expr: str) -> str:
     pattern = re.compile(
-        rf"^\s*.+?\s+COLLATE\s+utf8mb4_unicode_ci\s+AS\s+{param_name}\s*,?\s*$",
+        rf"^\s+CAST\(.+?\s+COLLATE\s+utf8mb4_unicode_ci\s+AS\s+{param_name}\s*,?\s*$",
         re.MULTILINE,
     )
     suffix = "," if param_name != "phase_id" else ""

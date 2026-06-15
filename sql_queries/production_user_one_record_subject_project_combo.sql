@@ -25,8 +25,8 @@ Use CAST(NULL AS CHAR(36)) for no filter.
 --   User mode:    user_id   = <current user UUID>,    centre_id = NULL
 --   All others remain NULL unless explicitly passed.
 --
--- To test this query manually in a SQL client, replace NULL with a real ID:
---   CAST('your-uuid-here' AS CHAR(36)) COLLATE utf8mb4_unicode_ci AS centre_id
+-- To test in a SQL client, replace NULL with a literal UUID, e.g.:
+--   centre_id  → 'your-uuid-here'  (drop the CAST, paste the value directly)
 -- ─────────────────────────────────────────────────────────────────────────────
 
 WITH
