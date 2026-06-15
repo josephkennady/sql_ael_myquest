@@ -18,34 +18,156 @@ The IDs are read by Python, injected one by one into the `params` CTE of the mai
 .
 ├── config.py
 ├── db.py
+├── run_pipeline.py                   ← full pipeline orchestrator (run this for cron)
 ├── run_production_users_by_centre.py
 ├── run_user_addon.py
+├── run_cleanup_inactive.py
 ├── sql_queries/
 │   ├── production_user_one_record_subject_project_combo.sql
 │   ├── centre_ids_limit_10.sql
 │   ├── user_addon.sql
+│   ├── inactive_users_and_centres.sql
 │   └── superset_sql_jinja_file.sql
 ├── superset_css/
 │   ├── ael_superset.css
 │   └── CSS_DOCUMENTATION.md
+├── logs/                             ← auto-created; one log file per pipeline run
 ├── .env.example
 └── .gitignore
 ```
 
 Key files:
 
-- `run_production_users_by_centre.py`: Python entry point for centre-by-centre or user-by-user execution.
-- `run_user_addon.py`: Python entry point to run `user_addon.sql` and write results to the analytics DB.
-- `sql_queries/production_user_one_record_subject_project_combo.sql`: Main MySQL 8 SQL query that returns one row per user.
+- `run_pipeline.py`: **Main entry point.** Runs all three pipeline steps in order, saves a timestamped log file, and emails the result.
+- `run_production_users_by_centre.py`: Incremental or full user refresh — centre-by-centre or user-by-user execution.
+- `run_user_addon.py`: Runs `user_addon.sql` and writes supplementary user attributes to the analytics DB.
+- `run_cleanup_inactive.py`: Removes rows from the analytics snapshot where the user or centre has since been deleted or set inactive in the source DB.
+- `sql_queries/production_user_one_record_subject_project_combo.sql`: Main MySQL 8 SQL that returns one row per user.
 - `sql_queries/production_user_one_record_subject_project_combo.md`: Detailed SQL notes, CTE flow, ERD, allocation rules, and maintenance guide.
 - `sql_queries/centre_ids_limit_10.sql`: Safe example centre-list query.
 - `sql_queries/user_addon.sql`: Supplementary user-level attributes query (gender, batch status, platform, first login). Writes to `quest_analytics.user_addon`.
+- `sql_queries/inactive_users_and_centres.sql`: Reference SELECT queries used by `run_cleanup_inactive.py` to identify inactive users and centres in the source DB.
 - `sql_queries/superset_sql_jinja_file.sql`: Superset virtual dataset SQL with Jinja2 filter expressions for the Youth QApp Phoenix AEL dashboard.
 - `superset_css/ael_superset.css`: Custom CSS for the Youth QApp Phoenix AEL Superset dashboard.
 - `superset_css/CSS_DOCUMENTATION.md`: Full documentation for the dashboard CSS — section breakdown, chart ID reference, flip card mechanics, and extension guide.
 - `db.py`: MySQL connection, SSH tunnel, fetch, and write helpers.
 - `config.py`: Environment-driven source and destination DB configuration.
 - `.env.example`: Placeholder environment configuration. Copy this to `.env` locally and fill in real values.
+
+## Full Pipeline Orchestrator
+
+`run_pipeline.py` is the single entry point for the complete daily pipeline. It runs three steps in order, streams all output to a timestamped log file, and emails the result on completion.
+
+### Steps (in order)
+
+| Step | Script | What it does |
+|---|---|---|
+| 1 | `run_production_users_by_centre.py --incremental-users` | Finds recently changed users, deletes stale rows, inserts fresh ones |
+| 2 | `run_user_addon.py` | Refreshes the `user_addon` supplementary attributes table |
+| 3 | `run_cleanup_inactive.py` | Removes rows for users or centres that are now deleted or inactive in the source DB |
+
+### Run the Full Pipeline
+
+```bash
+python3 run_pipeline.py --workers 4
+```
+
+Preview what the cleanup step would delete without making any changes:
+
+```bash
+python3 run_pipeline.py --workers 4 --dry-run
+```
+
+Skip the email report for a single run:
+
+```bash
+python3 run_pipeline.py --workers 4 --no-email
+```
+
+Custom target table:
+
+```bash
+python3 run_pipeline.py --target-table production_users_one_record --workers 4
+```
+
+### Pipeline Options
+
+```text
+--target-table
+    Analytics table name used across all steps.
+    Default: production_users_one_record
+
+--workers
+    Parallel workers for the incremental refresh step.
+    Default: 4
+
+--dry-run
+    Passes --dry-run to the cleanup step — shows what would be deleted
+    without applying any changes. The refresh and addon steps still run normally.
+
+--no-email
+    Skip sending the email report for this run even if SMTP is configured.
+```
+
+### Log Files
+
+Each run creates a timestamped log file under `logs/`:
+
+```
+logs/pipeline_2026-06-16_02-00-00.log
+```
+
+The `logs/` directory is created automatically and is gitignored.
+
+### Email Reports
+
+Add these variables to `.env` to receive an email after every run:
+
+```text
+PIPELINE_EMAIL_SMTP_HOST=smtp.gmail.com
+PIPELINE_EMAIL_SMTP_PORT=587
+PIPELINE_EMAIL_SMTP_USER=analytics@questalliance.net
+PIPELINE_EMAIL_SMTP_PASSWORD=your_app_password
+PIPELINE_EMAIL_TO=joseph@questalliance.net
+```
+
+For Gmail, generate an **App Password** at [myaccount.google.com → Security → App passwords](https://myaccount.google.com/apppasswords). Do not use your regular Gmail password.
+
+The email subject shows the overall result:
+
+```
+[AEL Pipeline] SUCCESS — 2026-06-16_02-00-00
+[AEL Pipeline] FAILED  — 2026-06-16_02-00-00
+```
+
+The body contains the last 100 lines of the log. The full log is attached as a file.
+
+### Test Email Configuration
+
+```bash
+python3 -c "
+import os, smtplib, datetime
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from dotenv import load_dotenv
+load_dotenv('.env')
+smtp_host = os.getenv('PIPELINE_EMAIL_SMTP_HOST')
+smtp_port = int(os.getenv('PIPELINE_EMAIL_SMTP_PORT', 587))
+smtp_user = os.getenv('PIPELINE_EMAIL_SMTP_USER')
+smtp_password = os.getenv('PIPELINE_EMAIL_SMTP_PASSWORD')
+email_to = os.getenv('PIPELINE_EMAIL_TO')
+msg = MIMEMultipart()
+msg['From'] = smtp_user; msg['To'] = email_to
+msg['Subject'] = '[AEL Pipeline] Test email'
+msg.attach(MIMEText('SMTP test — configuration is working.', 'plain'))
+with smtplib.SMTP(smtp_host, smtp_port) as s:
+    s.starttls(); s.login(smtp_user, smtp_password)
+    s.sendmail(smtp_user, email_to, msg.as_string())
+print('Sent.')
+"
+```
+
+---
 
 ## What The Runner Does
 
@@ -344,7 +466,7 @@ python3 run_production_users_by_centre.py \
 
 --incremental-overlap-minutes
     Safety overlap in minutes for --incremental-users cutoff.
-    Default: 5
+    Default: 15
 ```
 
 ## Rerun Behaviour
@@ -385,7 +507,7 @@ Do not combine this with `--centre-sql-path`. If centre allocation changed, run 
 
 The runner does this in two separate database calls:
 
-1. Destination DB: reads `MAX(created_at)` from the target table and subtracts a 5 minute safety overlap.
+1. Destination DB: reads `MAX(created_at)` from the target table and subtracts a 15 minute safety overlap.
 2. Source DB: finds users created after that cutoff, or users with learner/facilitator activity created after that cutoff.
 
 Then run:
@@ -458,9 +580,9 @@ Avoid high worker counts unless the source database and bastion have enough capa
 
 ## Scheduled Runs (Cron)
 
-For production servers, set up a daily cron job to run the incremental refresh automatically.
+For production servers, set up a daily cron job to run the full pipeline automatically. Use `run_pipeline.py` — it runs all three steps in order, saves a log file, and emails the result.
 
-### Daily Incremental Refresh
+### Daily Full Pipeline (Recommended)
 
 ```bash
 crontab -e
@@ -469,10 +591,10 @@ crontab -e
 Add this line (runs at 2:00 AM every day):
 
 ```
-0 2 * * * cd /path/to/pipeline && python3 run_production_users_by_centre.py --target-table production_users_one_record --workers 4 --incremental-users >> logs/incremental_$(date +\%Y\%m\%d).log 2>&1
+0 2 * * * cd /path/to/pipeline && python3 run_pipeline.py --workers 4 >> logs/cron.log 2>&1
 ```
 
-This logs each run to a dated file under `logs/`. The `logs/` directory is gitignored.
+`run_pipeline.py` already saves a full timestamped log to `logs/pipeline_YYYY-MM-DD_HH-MM-SS.log` and emails it to the address in `.env`. The `>> logs/cron.log` captures any startup errors that occur before the logger initialises.
 
 Create the logs directory if it does not exist:
 
@@ -483,22 +605,21 @@ mkdir -p /path/to/pipeline/logs
 ### Verify the Cron Job
 
 ```bash
-crontab -l                         # list all scheduled jobs
-tail -f logs/incremental_*.log     # follow the latest log during a run
+crontab -l                             # list all scheduled jobs
+tail -f logs/cron.log                  # follow cron output
+ls -lt logs/pipeline_*.log | head -5   # most recent pipeline log files
+tail -100 logs/pipeline_*.log          # tail the latest pipeline log
 ```
 
 ### Workers for Incremental vs Full Rebuild
 
-Use `--workers 4` for daily incremental runs. The changed-user list is small on a daily cadence so higher workers add little benefit. Use `--workers 8` for a full centre rebuild or when catching up after several missed days:
+Use `--workers 4` for daily incremental runs via `run_pipeline.py`. Use `--workers 8` for a manual full centre rebuild or when catching up after several missed days:
 
 ```bash
-# Daily incremental (cron)
-python3 run_production_users_by_centre.py \
-  --target-table production_users_one_record \
-  --workers 4 \
-  --incremental-users
+# Daily incremental (via cron — all three steps)
+python3 run_pipeline.py --workers 4
 
-# Full rebuild or large backlog
+# Full rebuild or large backlog (manual, incremental step only)
 python3 run_production_users_by_centre.py \
   --centre-sql-path sql_queries/centre_ids.sql \
   --target-table production_users_one_record \
@@ -541,7 +662,7 @@ Do not stage files containing:
 Syntax-check the Python files:
 
 ```bash
-python3 -m py_compile db.py run_production_users_by_centre.py
+python3 -m py_compile db.py run_production_users_by_centre.py run_user_addon.py run_cleanup_inactive.py run_pipeline.py
 ```
 
 The pipeline itself requires live database access, so a full end-to-end run should only be done from an environment with valid SSH and DB credentials.
@@ -630,6 +751,57 @@ python3 run_production_users_by_centre.py \
   --skip-existing \
   --retries 2
 ```
+
+---
+
+## Cleanup Inactive Records
+
+`run_cleanup_inactive.py` removes rows from the analytics snapshot table where the user or their centre has become inactive or soft-deleted in the production source database.
+
+This step is automatically included as Step 3 when running `run_pipeline.py`. It can also be run independently.
+
+### How It Works
+
+1. **Queries SOURCE DB** — finds all users where `status != 1 OR deleted_at IS NOT NULL`.
+2. **Queries SOURCE DB** — finds all centres where `status != 1 OR deleted_at IS NOT NULL`.
+3. **Deletes from ANALYTICS DB** — removes rows from `production_users_one_record` where:
+   - `id` matches an inactive user, or
+   - `centre_id` matches an inactive centre.
+
+The two database connections are kept separate. IDs are collected from the source in Python, then passed as parameters to the analytics DB delete — no cross-database SQL joins required.
+
+### Run Cleanup
+
+```bash
+python3 run_cleanup_inactive.py
+```
+
+Preview what would be deleted without making any changes:
+
+```bash
+python3 run_cleanup_inactive.py --dry-run
+```
+
+Custom target table:
+
+```bash
+python3 run_cleanup_inactive.py --target-table production_users_one_record
+```
+
+### Cleanup Options
+
+```text
+--target-table
+    Analytics table to clean up.
+    Default: production_users_one_record
+
+--dry-run
+    Show how many rows would be deleted without applying any changes.
+```
+
+### Reference SQL
+
+`sql_queries/inactive_users_and_centres.sql` contains the SELECT queries used to identify inactive records. It also includes the equivalent DELETE statements for reference if you want to run cleanup manually in a SQL client.
 
 ---
 
