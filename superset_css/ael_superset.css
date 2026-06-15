@@ -610,3 +610,112 @@ div.cell-bar.positive {
     font-size: 12px;
     color: #6c757d;
 }
+
+/* ==========================================================
+   ACCESS BY LOCATION (2526) — Table chart with bar column
+   Brand blue State header | orange Accessed header | blue bars
+   ========================================================== */
+
+.dashboard-chart-id-2526 {
+    border-top: 3px solid #156fb5 !important;
+}
+
+/* Column headers */
+.dashboard-chart-id-2526 thead th {
+    background: #156fb5 !important;
+    color: white !important;
+    font-size: 13px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.4px;
+    padding: 10px 16px !important;
+    border: none !important;
+    white-space: nowrap;
+}
+
+/* Accessed / count column header — orange */
+.dashboard-chart-id-2526 thead th:last-child {
+    background: linear-gradient(90deg, #f7941d, #e8830a) !important;
+}
+
+/* Data cells */
+.dashboard-chart-id-2526 tbody td {
+    padding: 8px 16px !important;
+    font-size: 13px !important;
+    border-bottom: 1px solid rgba(21, 111, 181, 0.08) !important;
+    color: #2c3e50 !important;
+    vertical-align: middle !important;
+    border-top: none !important;
+}
+
+/* State name — slightly bolder */
+.dashboard-chart-id-2526 tbody td:first-child {
+    font-weight: 600 !important;
+    color: #1a2f4a !important;
+}
+
+/* Alternating row stripe */
+.dashboard-chart-id-2526 tbody tr:nth-child(even) td {
+    background: rgba(21, 111, 181, 0.03) !important;
+}
+
+/* Row hover highlight */
+.dashboard-chart-id-2526 tbody tr:hover td {
+    background: rgba(21, 111, 181, 0.08) !important;
+}
+
+/* Bar inside table cell — replace default green with brand blue gradient */
+.dashboard-chart-id-2526 .cell-bar.positive {
+    background: linear-gradient(90deg, #156fb5 0%, #4db6e0 100%) !important;
+    border-radius: 4px !important;
+    height: 14px !important;
+    margin-top: 4px;
+    opacity: 0.78;
+    transition: opacity 0.2s ease;
+}
+
+.dashboard-chart-id-2526 tbody tr:hover .cell-bar.positive {
+    opacity: 1;
+}
+
+/* ==========================================================
+   ACCESS BY DEVICE (2527) — Horizontal stacked bar chart
+   Orange top accent to distinguish from Location chart
+   ========================================================== */
+
+.dashboard-chart-id-2527 {
+    border-top: 3px solid #f7941d !important;
+    box-shadow: 0 2px 12px rgba(247, 148, 29, 0.10),
+                0 1px 4px rgba(0, 0, 0, 0.06) !important;
+}
+
+/* Chart title */
+.dashboard-chart-id-2527 .chart-header .header-title span {
+    color: #e8830a !important;
+    font-weight: 700 !important;
+}
+
+/* Axis tick labels */
+.dashboard-chart-id-2527 .echarts-for-react text {
+    font-size: 12px !important;
+    fill: #4a5568 !important;
+}
+
+/* Legend items */
+.dashboard-chart-id-2527 .echarts-for-react .legend-item text {
+    font-size: 12px !important;
+}
+
+/* ==========================================================
+   USER TYPE CHART (2528) — matching blue top accent
+   ========================================================== */
+
+.dashboard-chart-id-2528 {
+    border-top: 3px solid #156fb5 !important;
+    box-shadow: 0 2px 12px rgba(21, 111, 181, 0.10),
+                0 1px 4px rgba(0, 0, 0, 0.06) !important;
+}
+
+.dashboard-chart-id-2528 .chart-header .header-title span {
+    color: #156fb5 !important;
+    font-weight: 700 !important;
+}
