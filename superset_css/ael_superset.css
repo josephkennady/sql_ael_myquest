@@ -637,20 +637,27 @@ div.cell-bar.positive {
     background: linear-gradient(90deg, #f7941d, #e8830a) !important;
 }
 
-/* Data cells */
+/* Data cells — extra top padding so number sits clearly above bar */
 .dashboard-chart-id-2526 tbody td {
-    padding: 8px 16px !important;
+    padding: 10px 16px 6px 16px !important;
     font-size: 13px !important;
     border-bottom: 1px solid rgba(21, 111, 181, 0.08) !important;
     color: #2c3e50 !important;
-    vertical-align: middle !important;
+    vertical-align: top !important;
     border-top: none !important;
+    line-height: 1.4 !important;
 }
 
-/* State name — slightly bolder */
+/* State name — normal weight, dark enough to read easily */
 .dashboard-chart-id-2526 tbody td:first-child {
-    font-weight: 600 !important;
+    font-weight: 500 !important;
     color: #1a2f4a !important;
+}
+
+/* Number in bar column — bold so it pops above the bar */
+.dashboard-chart-id-2526 tbody td:last-child {
+    font-weight: 700 !important;
+    color: #0d3b6b !important;
 }
 
 /* Alternating row stripe */
@@ -660,21 +667,21 @@ div.cell-bar.positive {
 
 /* Row hover highlight */
 .dashboard-chart-id-2526 tbody tr:hover td {
-    background: rgba(21, 111, 181, 0.08) !important;
+    background: rgba(21, 111, 181, 0.07) !important;
 }
 
-/* Bar inside table cell — replace default green with brand blue gradient */
+/* Bar — thin, semi-transparent so number text above it is always readable */
 .dashboard-chart-id-2526 .cell-bar.positive {
-    background: linear-gradient(90deg, #156fb5 0%, #4db6e0 100%) !important;
-    border-radius: 4px !important;
-    height: 14px !important;
-    margin-top: 4px;
-    opacity: 0.78;
+    background: linear-gradient(90deg, #156fb5 0%, #4db6e0 80%, #a8d9f0 100%) !important;
+    border-radius: 3px !important;
+    height: 5px !important;
+    margin-top: 5px;
+    opacity: 0.55;
     transition: opacity 0.2s ease;
 }
 
 .dashboard-chart-id-2526 tbody tr:hover .cell-bar.positive {
-    opacity: 1;
+    opacity: 0.85;
 }
 
 /* ==========================================================
