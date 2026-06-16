@@ -349,8 +349,8 @@ def run(
         raise ValueError("--retries must be 0 or greater")
     if replace_target and skip_existing:
         raise ValueError("--skip-existing cannot be used with --replace-target")
-    if replace_existing_users and user_sql_path is None:
-        raise ValueError("--replace-existing-users can only be used with --user-sql-path")
+    if replace_existing_users and user_sql_path is None and centre_sql_path is None:
+        raise ValueError("--replace-existing-users requires --user-sql-path or --centre-sql-path")
     if replace_existing_users and skip_existing:
         raise ValueError("--replace-existing-users cannot be used with --skip-existing")
     if replace_existing_users and replace_target:
@@ -592,9 +592,10 @@ def parse_args() -> argparse.Namespace:
         "--replace-existing-users",
         action="store_true",
         help=(
-            "For --user-sql-path incremental refreshes, delete existing target rows "
-            "for each user before inserting refreshed rows. Cannot be used with "
-            "--replace-target or --skip-existing."
+            "Delete existing target rows for each ID before inserting refreshed rows. "
+            "Works with --centre-sql-path (deletes all rows for that centre, reinserts fresh) "
+            "or --user-sql-path (deletes and reinserts per user). "
+            "Cannot be used with --replace-target or --skip-existing."
         ),
     )
     parser.add_argument(
@@ -609,8 +610,8 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.replace_target and args.skip_existing:
         parser.error("--skip-existing cannot be used with --replace-target")
-    if args.replace_existing_users and args.user_sql_path is None:
-        parser.error("--replace-existing-users can only be used with --user-sql-path")
+    if args.replace_existing_users and args.user_sql_path is None and args.centre_sql_path is None:
+        parser.error("--replace-existing-users requires --user-sql-path or --centre-sql-path")
     if args.replace_existing_users and args.skip_existing:
         parser.error("--replace-existing-users cannot be used with --skip-existing")
     if args.replace_existing_users and args.replace_target:
