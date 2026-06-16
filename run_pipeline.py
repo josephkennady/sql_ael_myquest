@@ -278,6 +278,7 @@ def main() -> None:
             python, "run_production_users_by_centre.py",
             "--target-table", args.target_table,
             "--workers", str(args.workers),
+            "--centre-sql-path", "sql_queries/centre_ids.sql",
         ]
     results[step1_label] = run_step(step1_label, step1_cmd)
     log_system_stats("after step 1")
