@@ -16,6 +16,8 @@ Usage:
 import argparse
 import logging
 
+import pymysql
+
 from config import ANALYTICS_DB, SOURCE_DB
 from db import _connect_or_pool, fetch
 
@@ -60,26 +62,35 @@ def delete_in_chunks(
     chunk_size = 500
     total_deleted = 0
 
-    with _connect_or_pool(ANALYTICS_DB) as conn:
-        with conn.cursor() as cur:
-            for i in range(0, len(ids), chunk_size):
-                chunk = ids[i : i + chunk_size]
-                placeholders = ", ".join(["%s"] * len(chunk))
-                sql = f"DELETE FROM `{target_table}` WHERE `{column}` IN ({placeholders})"
+    try:
+        with _connect_or_pool(ANALYTICS_DB) as conn:
+            with conn.cursor() as cur:
+                for i in range(0, len(ids), chunk_size):
+                    chunk = ids[i : i + chunk_size]
+                    placeholders = ", ".join(["%s"] * len(chunk))
+                    sql = f"DELETE FROM `{target_table}` WHERE `{column}` IN ({placeholders})"
 
-                if dry_run:
-                    logging.info(
-                        "[DRY RUN] Would delete rows where %s IN (%d ids, e.g. %s...)",
-                        column,
-                        len(chunk),
-                        chunk[0],
-                    )
-                else:
-                    cur.execute(sql, chunk)
-                    total_deleted += cur.rowcount
+                    if dry_run:
+                        logging.info(
+                            "[DRY RUN] Would delete rows where %s IN (%d ids, e.g. %s...)",
+                            column,
+                            len(chunk),
+                            chunk[0],
+                        )
+                    else:
+                        cur.execute(sql, chunk)
+                        total_deleted += cur.rowcount
 
-        if not dry_run:
-            conn.commit()
+            if not dry_run:
+                conn.commit()
+    except pymysql.err.ProgrammingError as exc:
+        if exc.args[0] == 1146:
+            logging.warning(
+                "Table '%s' does not exist yet — skipping cleanup for column '%s'",
+                target_table, column,
+            )
+            return 0
+        raise
 
     return total_deleted
 

@@ -91,7 +91,9 @@ LIMIT {int(limit)}
 
     ids = fetch(SOURCE_DB, sql)
     id_column = "id" if "id" in ids.columns else ids.columns[0]
-    return list(dict.fromkeys(ids[id_column].dropna().astype(str).tolist()))
+    return list(dict.fromkeys(
+        v for v in ids[id_column].dropna().astype(str) if v.strip()
+    ))
 
 
 def get_incremental_cutoff(target_table: str, overlap_minutes: int) -> str:
