@@ -235,9 +235,9 @@ ple_allocation AS (
         ON lt.id = l.lesson_type_id
     WHERE u.user_type IN (3, 4)
       AND u.is_ple = 1
-      AND s.is_ple IN (1, 2)
+      AND s.is_ple IN (0, 1)
       AND pcp.id IS NOT NULL
-      AND spcp.subject_id IS NOT NULL
+      AND (s.is_ple = 0 OR spcp.subject_id IS NOT NULL)
       AND (u.batch_id IS NULL OR bs.subject_id IS NOT NULL)
       AND (
           s.year_to_map IS NULL
