@@ -35,10 +35,14 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
+import pymysql
 import psutil
 from dotenv import load_dotenv
 
 load_dotenv()
+
+from config import ANALYTICS_DB
+from db import fetch
 
 LOGS_DIR = Path("logs")
 LOGS_DIR.mkdir(exist_ok=True)
@@ -191,6 +195,17 @@ def send_email(subject: str, log_path: Path) -> None:
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _target_table_exists(table_name: str) -> bool:
+    """Return True if the table already exists in the analytics DB."""
+    try:
+        fetch(ANALYTICS_DB, f"SELECT 1 FROM `{table_name}` LIMIT 0")
+        return True
+    except pymysql.err.ProgrammingError as exc:
+        if exc.args[0] == 1146:
+            return False
+        raise
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the full AEL pipeline in order.")
     parser.add_argument(
@@ -242,14 +257,29 @@ def main() -> None:
     python = sys.executable
     results: dict[str, bool] = {}
 
-    # ── Step 1: Incremental user refresh ────────────────────────────────────
-    step1_cmd = [
-        python, "run_production_users_by_centre.py",
-        "--target-table", args.target_table,
-        "--workers", str(args.workers),
-        "--incremental-users",
-    ]
-    results["1. Incremental refresh"] = run_step("1. Incremental refresh", step1_cmd)
+    # ── Step 1: Full (centre-based) or incremental (user-based) refresh ────────
+    table_exists = _target_table_exists(args.target_table)
+    if table_exists:
+        logging.info("Table '%s' exists — running incremental refresh by user", args.target_table)
+        step1_label = "1. Incremental refresh"
+        step1_cmd = [
+            python, "run_production_users_by_centre.py",
+            "--target-table", args.target_table,
+            "--workers", str(args.workers),
+            "--incremental-users",
+        ]
+    else:
+        logging.info(
+            "Table '%s' not found — running full centre refresh for first-time populate",
+            args.target_table,
+        )
+        step1_label = "1. Full centre refresh (first run)"
+        step1_cmd = [
+            python, "run_production_users_by_centre.py",
+            "--target-table", args.target_table,
+            "--workers", str(args.workers),
+        ]
+    results[step1_label] = run_step(step1_label, step1_cmd)
     log_system_stats("after step 1")
 
     # ── Step 2: User addon attributes ───────────────────────────────────────
