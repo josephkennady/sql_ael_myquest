@@ -471,13 +471,14 @@ _DTYPE_TO_MYSQL = {
 }
 
 
-def _create_table_sql(table: str, df: pd.DataFrame) -> str:
+def _create_table_sql(table: str, df: pd.DataFrame, if_not_exists: bool = True) -> str:
     """Generate CREATE TABLE SQL inferred from a DataFrame's dtypes."""
     col_defs = ", ".join(
         f"`{col}` {_DTYPE_TO_MYSQL.get(str(dtype), 'TEXT')}"
         for col, dtype in df.dtypes.items()
     )
-    return f"CREATE TABLE IF NOT EXISTS `{table}` ({col_defs})"
+    qualifier = "IF NOT EXISTS " if if_not_exists else ""
+    return f"CREATE TABLE {qualifier}`{table}` ({col_defs})"
 
 
 def write_table(
@@ -514,8 +515,13 @@ def write_table(
         with conn.cursor() as cur:
             if if_exists == "replace":
                 cur.execute(f"DROP TABLE IF EXISTS `{table}`")
-                cur.execute(_create_table_sql(table, df))
+                # No IF NOT EXISTS — table was just dropped, force create
+                cur.execute(_create_table_sql(table, df, if_not_exists=False))
                 log.debug("Recreated table %s", table)
+            else:
+                # append: create the table if it doesn't exist yet (first-run safe)
+                cur.execute(_create_table_sql(table, df, if_not_exists=True))
+                log.debug("Ensured table %s exists", table)
             for i in range(0, len(rows), CHUNK_SIZE):
                 batch = rows[i : i + CHUNK_SIZE]
                 cur.executemany(insert_sql, batch)
@@ -560,8 +566,11 @@ def write_table_with_conn(
     with conn.cursor() as cur:
         if if_exists == "replace":
             cur.execute(f"DROP TABLE IF EXISTS `{table}`")
-            cur.execute(_create_table_sql(table, df))
+            cur.execute(_create_table_sql(table, df, if_not_exists=False))
             log.debug("Recreated table %s", table)
+        else:
+            cur.execute(_create_table_sql(table, df, if_not_exists=True))
+            log.debug("Ensured table %s exists", table)
         for i in range(0, len(rows), CHUNK_SIZE):
             batch = rows[i : i + CHUNK_SIZE]
             cur.executemany(insert_sql, batch)
