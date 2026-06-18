@@ -1,7 +1,8 @@
 # ── Credentials and private keys ─────────────────────────────
 .env
 *.pem
-DB_Config/
+DB_Config/*
+!DB_Config/.gitkeep
 # ── Superset dashboard exports (keep CSS + docs, exclude exported zips/folders/PDFs) ──
 superset_css/dashboard_export*/
 superset_css/*.zip
@@ -45,7 +46,8 @@ to_push_to_server.md
 
 # ── Logs ──────────────────────────────────────────────────────
 *.log
-logs/
+logs/*
+!logs/.gitkeep
 
 # ── Local cache ───────────────────────────────────────────────
 cache.duckdb

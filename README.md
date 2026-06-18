@@ -14,10 +14,13 @@ MySQL-based AEL/MyQuest reporting pipeline. Runs per-centre SQL to build a one-r
 ├── run_production_users_by_centre.py  ← Centre/user/incremental refresh engine
 ├── run_user_addon.py                  ← Supplementary user attributes (gender, batch, platform)
 ├── run_cleanup_inactive.py            ← Remove inactive user/centre rows from analytics
+├── run_sql_filters.py                 ← Build sql_ael_filters flat filter table
 ├── debug_centre.py                    ← 9-stage diagnostic tracer for a single centre
 ├── sql_queries/
 │   ├── production_user_one_record_subject_project_combo.sql  ← Main one-record SQL
 │   ├── production_user_one_record_subject_project_combo.md   ← CTE walkthrough & ERD notes
+│   ├── production_user_one_record_subject_project_combo.sql  ← Main one-record SQL (duplicate removed)
+│   ├── sql_filter.sql                 ← Filter dimension table SQL (JSON_TABLE explode + GROUP BY)
 │   ├── centre_ids.sql                 ← [gitignored] Full production centre list
 │   ├── centre_ids_limit_10.sql        ← Safe 10-centre example for testing
 │   ├── user_addon.sql                 ← Supplementary user attributes query
@@ -33,6 +36,72 @@ MySQL-based AEL/MyQuest reporting pipeline. Runs per-centre SQL to build a one-r
 ├── .env.example                       ← Placeholder — copy to .env and fill in
 └── .gitignore
 ```
+
+---
+
+## After Cloning — Setup Checklist
+
+These files and folders are **gitignored** (they contain secrets or real IDs). You must create them manually after cloning.
+
+```bash
+git clone <repo-url>
+cd sql_ael_myquest
+```
+
+**Step 1 — Python dependencies**
+```bash
+pip install -r requirements.txt
+```
+
+**Step 2 — Environment file**
+```bash
+cp .env.example .env
+# Open .env and fill in all DB credentials and SSH settings
+```
+
+**Step 3 — SSH private key files**
+
+The `DB_Config/` folder is created by the clone (via `.gitkeep`) but the key files are not in Git.
+Copy your `.pem` files into it:
+```bash
+# DB_Config/ folder already exists after clone
+cp /path/to/your/source_key.pem      DB_Config/
+cp /path/to/your/destination_key.pem DB_Config/
+```
+Then update `.env` to point `SOURCE_SSH_PKEY_FILE` and `DEST_SSH_PKEY_FILE` to the filenames you used.
+
+**Step 4 — Centre ID SQL file**
+
+`sql_queries/centre_ids.sql` is gitignored (contains real production UUIDs). Create it on the server:
+```bash
+# Example — replace with your actual centre IDs
+cat > sql_queries/centre_ids.sql << 'EOF'
+SELECT id FROM centres WHERE status = 1 AND deleted_at IS NULL;
+EOF
+```
+Or copy it from wherever the production version is stored.
+
+**Step 5 — Verify and run**
+```bash
+python3 -m py_compile db.py config.py run_pipeline.py   # syntax check
+python3 run_pipeline.py --workers 6
+```
+
+---
+
+## What Is and Is Not in Git
+
+| Path | In Git? | Why |
+|---|---|---|
+| All `.py` scripts | Yes | Safe — no credentials |
+| `sql_queries/*.sql` (most) | Yes | Safe |
+| `sql_queries/centre_ids.sql` | **No** | Contains real production centre UUIDs |
+| `sql_queries/user_ids.sql` | **No** | Contains real user UUIDs |
+| `.env` | **No** | Contains DB passwords and hostnames |
+| `DB_Config/*.pem` | **No** | SSH private keys |
+| `DB_Config/` (folder) | Yes | Empty folder placeholder (`.gitkeep`) |
+| `logs/` (folder) | Yes | Empty folder placeholder (`.gitkeep`) |
+| `logs/*.log` | **No** | Runtime logs — may contain IDs |
 
 ---
 
@@ -62,6 +131,7 @@ The orchestrator auto-detects first run vs incremental:
 | 1 | `run_production_users_by_centre.py` | Full centre refresh **or** incremental user refresh (auto-detected) |
 | 2 | `run_user_addon.py` | Refreshes the `user_addon` supplementary attributes table |
 | 3 | `run_cleanup_inactive.py` | Removes rows for users/centres now deleted or inactive in source DB |
+| 4 | `run_sql_filters.py` | Builds `sql_ael_filters` — flat filter dimension table for Superset |
 
 ### Auto First-Run Detection
 
