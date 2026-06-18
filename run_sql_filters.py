@@ -35,7 +35,7 @@ logging.basicConfig(
 )
 
 DEFAULT_SQL_PATH    = Path("sql_queries/sql_filter.sql")
-DEFAULT_SOURCE_TABLE = "production_users_one_record_test"
+DEFAULT_SOURCE_TABLE = "production_users_one_record"
 DEFAULT_TARGET_TABLE = "sql_ael_filters"
 
 
@@ -107,12 +107,15 @@ def main() -> None:
     logging.info("Filter SQL returned %d rows across %d columns", len(df), len(df.columns))
     logging.info("Columns: %s", list(df.columns))
 
-    # ROUND() returns DECIMAL in MySQL → pandas reads as object (text).
-    # Force to int so the column is stored as INT not TEXT.
-    if "rounded_completion" in df.columns:
-        df["rounded_completion"] = (
-            df["rounded_completion"].fillna(0).astype(int)
-        )
+    # Complex queries with CASE WHEN / JSON_TABLE return all columns as object
+    # dtype in pandas regardless of the underlying MySQL type. Explicitly cast
+    # every numeric column so _create_table_sql writes INT not TEXT.
+    # NULL values become 0 as requested.
+    int_columns = ["rounded_completion", "year_category", "batch_status"]
+    for col in int_columns:
+        if col in df.columns:
+            df[col] = df[col].fillna(0).astype(int)
+            logging.info("Cast column '%s' → int (nulls → 0)", col)
 
     if_exists = "append" if args.append else "replace"
     logging.info("Writing to quest_analytics.%s (mode: %s) ...", args.target_table, if_exists)
