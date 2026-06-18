@@ -4,6 +4,7 @@ Full pipeline orchestrator — runs all three steps in order:
   Step 1: Incremental user refresh  (run_production_users_by_centre.py)
   Step 2: User addon attributes      (run_user_addon.py)
   Step 3: Cleanup inactive records   (run_cleanup_inactive.py)
+  Step 4: SQL filter table           (run_sql_filters.py → sql_ael_filters)
 
 All output is written to logs/pipeline_YYYY-MM-DD_HH-MM-SS.log and
 optionally emailed to PIPELINE_EMAIL_TO on completion (pass or fail).
@@ -299,6 +300,15 @@ def main() -> None:
     if args.dry_run:
         step3_cmd.append("--dry-run")
     results["3. Cleanup inactive"] = run_step("3. Cleanup inactive", step3_cmd)
+    log_system_stats("after step 3")
+
+    # ── Step 4: SQL filter table (sql_ael_filters) ───────────────────────────
+    step4_cmd = [
+        python, "run_sql_filters.py",
+        "--source-table", args.target_table,
+        "--target-table", "sql_ael_filters",
+    ]
+    results["4. SQL filter table"] = run_step("4. SQL filter table", step4_cmd)
 
     stop_monitor.set()
 
