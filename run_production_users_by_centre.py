@@ -125,6 +125,33 @@ FROM {table_sql}
     return str(cutoff)
 
 
+def _get_all_source_active_user_ids() -> set[str]:
+    """Fetch every active user ID from the source DB — mirrors the active_users CTE."""
+    sql = """
+SELECT u.id AS user_id
+FROM users u
+LEFT JOIN student_details sd ON sd.user_id = u.id
+WHERE u.type IN (1, 2, 3, 4)
+  AND u.status = 1
+  AND u.deleted_at IS NULL
+"""
+    df = fetch(SOURCE_DB, sql)
+    return set(df["user_id"].dropna().astype(str).tolist())
+
+
+def _get_destination_user_ids(target_table: str) -> set[str]:
+    """Fetch all user IDs already written in the analytics destination table."""
+    table_sql = _quote_identifier(target_table)
+    sql = f"SELECT DISTINCT user_id FROM {table_sql}"
+    try:
+        df = fetch(ANALYTICS_DB, sql)
+        return set(df["user_id"].dropna().astype(str).tolist())
+    except pymysql.err.ProgrammingError as exc:
+        if exc.args[0] == 1146:
+            return set()
+        raise
+
+
 def get_incremental_user_ids(target_table: str, overlap_minutes: int) -> list[str]:
     cutoff_at = get_incremental_cutoff(target_table, overlap_minutes)
     logging.info(
@@ -132,6 +159,8 @@ def get_incremental_user_ids(target_table: str, overlap_minutes: int) -> list[st
         cutoff_at,
         overlap_minutes,
     )
+
+    # Part 1 — cutoff-based: users with new registrations or new activity
     sql = """
 SELECT DISTINCT user_id AS id
 FROM (
@@ -158,8 +187,30 @@ FROM (
 WHERE user_id IS NOT NULL
 ORDER BY user_id
 """
-    ids = fetch(SOURCE_DB, sql, (cutoff_at, cutoff_at, cutoff_at))
-    return list(dict.fromkeys(ids["id"].dropna().astype(str).tolist()))
+    ids_df = fetch(SOURCE_DB, sql, (cutoff_at, cutoff_at, cutoff_at))
+    cutoff_ids = set(ids_df["id"].dropna().astype(str).tolist())
+    logging.info("Cutoff-based changed users: %d", len(cutoff_ids))
+
+    # Part 2 — gap check: active users in source that are missing from destination
+    logging.info("Checking for active users missing from destination table ...")
+    source_ids = _get_all_source_active_user_ids()
+    dest_ids = _get_destination_user_ids(target_table)
+    missing_ids = source_ids - dest_ids
+    logging.info(
+        "Source active users: %d | Destination users: %d | Missing from destination: %d",
+        len(source_ids),
+        len(dest_ids),
+        len(missing_ids),
+    )
+
+    all_ids = cutoff_ids | missing_ids
+    logging.info(
+        "Total users to refresh: %d (%d from cutoff + %d new/missing)",
+        len(all_ids),
+        len(cutoff_ids - missing_ids),
+        len(missing_ids),
+    )
+    return list(dict.fromkeys(v for v in all_ids if v.strip()))
 
 
 def get_existing_ids(target_table: str, id_type: str, ids: list[str]) -> set[str]:

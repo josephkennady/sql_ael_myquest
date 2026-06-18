@@ -105,6 +105,83 @@ python3 run_pipeline.py --workers 6
 
 ---
 
+## When to Run Full Refresh vs Incremental Refresh
+
+### Use Full Refresh When
+
+| Situation | Why |
+|---|---|
+| First time setting up — table does not exist | Needs to process all centres from scratch |
+| SQL allocation logic changed (e.g. `is_ple` rules) | Existing rows were built with old logic — all users need recalculating |
+| Source database schema changed (new column, renamed join) | Old rows may have wrong/missing data |
+| New centres added to `centre_ids.sql` | Their users have never been processed |
+| Suspected data corruption or large gap in runs | Safest option is a clean rebuild |
+| Pipeline failed mid-run and many centres are missing | Use `--skip-existing` to resume without reprocessing already-written centres |
+
+**How to run a full refresh:**
+```bash
+# Rebuild from scratch (drops and recreates the table)
+python3 run_production_users_by_centre.py \
+  --centre-sql-path sql_queries/centre_ids.sql \
+  --target-table production_users_one_record \
+  --replace-target \
+  --workers 8
+
+# Resume a partial run (skips centres already written)
+python3 run_production_users_by_centre.py \
+  --centre-sql-path sql_queries/centre_ids.sql \
+  --target-table production_users_one_record \
+  --skip-existing \
+  --workers 8
+```
+
+---
+
+### Use Incremental Refresh When
+
+| Situation | Why |
+|---|---|
+| Daily scheduled run (cron / `run_pipeline.py`) | Only a small number of users change each day |
+| Users registered recently | Picks them up via `users.created_at >= cutoff` |
+| Learners completed lessons recently | Picks them up via `learning_activities.created_at >= cutoff` |
+| Normal day-to-day operation | Fastest option — processes only changed users |
+
+**How it works (two-part check):**
+
+1. **Cutoff-based** — finds users whose account or activity was created after `MAX(created_at) - 5 minutes` in the destination table
+2. **Gap check** — fetches all active users from the source DB and compares with all users in the destination. Any user present in source but missing from the destination is also included — catches users who were skipped during a previous run or joined before the pipeline was first set up
+
+**How to run manually:**
+```bash
+python3 run_production_users_by_centre.py \
+  --target-table production_users_one_record \
+  --incremental-users \
+  --workers 4
+```
+
+---
+
+### Decision Guide
+
+```
+Is this the first run or does the target table not exist?
+  └── YES → Full refresh (run_pipeline.py handles this automatically)
+
+Did the SQL allocation logic or source schema change?
+  └── YES → Full refresh with --replace-target
+
+Are you doing a daily scheduled update?
+  └── YES → Incremental (run_pipeline.py handles this automatically)
+
+Did some centres get skipped in a previous run?
+  └── YES → Full refresh with --skip-existing (resumes without duplicating)
+
+Are there users in source that are missing from the analytics table?
+  └── YES → Incremental refresh will catch them automatically (gap check)
+```
+
+---
+
 ## Quick Start
 
 ```bash
