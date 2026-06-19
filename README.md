@@ -475,6 +475,58 @@ Key rule: `(s.is_ple = 0 OR spcp.subject_id IS NOT NULL)` — `is_ple=0` subject
 
 ---
 
+## Optional: Without Career Path Table
+
+`production_users_one_record_without_career_path` is a **temporary** variant of `production_users_one_record` that includes all PLE users regardless of whether they have a career path assigned. Use it when you need to submit reports that should not be filtered by career path.
+
+### What Is Different
+
+| | `production_users_one_record` | `production_users_one_record_without_career_path` |
+|---|---|---|
+| PLE users **with** career path | Included | Same — no change |
+| PLE users **without** career path | Excluded | **Included** |
+| Non-PLE users | Included | Same — no change |
+| SQL template | `production_user_one_record_subject_project_combo.sql` | `production_user_one_record_without_career_path.sql` |
+
+### SQL Change (single line in `ple_allocation`)
+
+```sql
+-- Main SQL — career path required for PLE users
+AND pcp.id IS NOT NULL
+AND (s.is_ple = 0 OR spcp.subject_id IS NOT NULL)
+
+-- Without career path variant — career path optional
+AND (pcp.id IS NULL OR s.is_ple = 0 OR spcp.subject_id IS NOT NULL)
+```
+
+PLE users who have no career path assigned get non-PLE subjects allocated. PLE users who do have a career path behave exactly as in the main table.
+
+### How to Run
+
+**Initial full load (first time — table does not exist):**
+
+```bash
+python3 run_production_users_by_centre.py \
+  --sql-path sql_queries/production_user_one_record_without_career_path.sql \
+  --target-table production_users_one_record_without_career_path \
+  --centre-sql-path sql_queries/centre_ids.sql \
+  --workers 4
+```
+
+**Subsequent incremental refreshes:**
+
+```bash
+python3 run_production_users_by_centre.py \
+  --sql-path sql_queries/production_user_one_record_without_career_path.sql \
+  --target-table production_users_one_record_without_career_path \
+  --incremental-users \
+  --workers 4
+```
+
+> **Note:** This table is for temporary use (a few months of reporting). The main pipeline (`run_pipeline.py`) is not affected — it always writes to `production_users_one_record`. When no longer needed, drop the table and ignore the SQL file.
+
+---
+
 ## Scheduled Runs (Cron)
 
 ```bash
