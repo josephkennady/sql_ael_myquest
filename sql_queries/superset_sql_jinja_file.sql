@@ -1,16 +1,38 @@
 SELECT
 	a.user_id AS tlo_users_id,
 	a.created_at AS created_at,
-	a.user_type AS user_type,
-	a.is_ple AS is_ple,
-	a.project_combos AS project_phase_combos,
+  a.user_type AS user_type,
+CASE
+WHEN a.user_type = 1 THEN 'Admin'
+WHEN
+  a.user_type = 2
+      AND is_master_trainer = 1
+THEN
+  'Master Trainer'
+WHEN a.user_type = 2 THEN 'Facilitator'
+WHEN a.user_type = 3 THEN 'Learner'
+WHEN a.user_type = 4 THEN 'Alumni'
+ELSE 'Missing Data'
+END AS user_type_e,
+CASE
+    WHEN b.ple_enabled = 1 THEN 'PLE Centre'
+    ELSE 'Non-PLE Centre'
+END AS ple_enabled_e,
+  CASE
+      WHEN a.is_ple = 1 THEN 'PLE'
+      ELSE 'Non-PLE'
+  END AS is_ple_e,
+  a.is_ple,
+	a.project_combos,
 	a.total_allocated AS a_overa_less_asses_c,
 	a.total_assessments_allocated AS a_overa_assess_c,
 	a.total_lessons_allocated AS a_overa_lesson_c,
 	a.total_completed AS c_overa_less_asses_c,
 	a.total_assessments_completed AS c_overa_asse_c,
 	a.total_lessons_completed AS c_overa_less_c,
-	a.completion_pct AS rounded_completion,
+-- 	CAST(a.completion_pct AS UNSIGNED) AS rounded_completion,
+ROUND(a.completion_pct) AS rounded_completion,
+	-- a.completion_pct AS rounded_completion,
 	b.username AS user_name,
 	b.gender,
 	b.centre_name,
@@ -22,12 +44,13 @@ SELECT
 	b.batch_status,
 	b.centre_type,
 	b.platform,
-	b.ple_enabled,
+  b.ple_enabled,
 	b.first_login,
-	a.subject_combos
+	a.subject_combos,
+	b.is_master_trainer
 FROM
 	quest_analytics.production_users_one_record a
-LEFT JOIN quest_analytics.user_addon b ON
+JOIN quest_analytics.user_addon b ON
 	b.user_id = a.user_id
 
 AND JSON_UNQUOTE(
@@ -47,9 +70,6 @@ AND JSON_UNQUOTE(
 {% set org_name_filter      = filter_values('org_name')      | select('string') | list %}
 {% set user_type_filter     = filter_values('user_type')     | select('string') | list %}
 {% set gender_filter        = filter_values('gender')        | select('string') | list %}
-{% set batch_name_filter      = filter_values('batch_name')      | select('string') | list %}
-{% set batch_status_filter    = filter_values('batch_status')    | select('string') | list %}
-{% set rounded_completion_filter = filter_values('rounded_completion') | map('int') | list %}
 {% set ple_enabled_filter   = filter_values('ple_enabled')   | select('string') | list %}
 {% set is_ple_filter        = filter_values('is_ple')        | select('string') | list %}
 
@@ -82,7 +102,7 @@ AND JSON_UNQUOTE(
 {% endif %}
 
 {% if user_type_filter %}
-  AND user_type IN ({{ "'" + "', '".join(user_type_filter) + "'" }})
+  AND user_type_e IN ({{ "'" + "', '".join(user_type_filter) + "'" }})
 {% endif %}
 
 {% if gender_filter %}
@@ -90,23 +110,11 @@ AND JSON_UNQUOTE(
 {% endif %}
 
 {% if ple_enabled_filter %}
-  AND ple_enabled IN ({{ "'" + "', '".join(ple_enabled_filter) + "'" }})
+  AND ple_enabled_e IN ({{ "'" + "', '".join(ple_enabled_filter) + "'" }})
 {% endif %}
 
 {% if is_ple_filter %}
-  AND is_ple IN ({{ "'" + "', '".join(is_ple_filter) + "'" }})
-{% endif %}
-
-{% if batch_name_filter %}
-  AND batch_name IN ({{ "'" + "', '".join(batch_name_filter) + "'" }})
-{% endif %}
-
-{% if batch_status_filter %}
-  AND batch_status IN ({{ "'" + "', '".join(batch_status_filter) + "'" }})
-{% endif %}
-
-{% if rounded_completion_filter %}
-  AND ROUND(a.completion_pct) IN ({{ rounded_completion_filter | join(', ') }})
+  AND is_ple_e IN ({{ "'" + "', '".join(is_ple_filter) + "'" }})
 {% endif %}
 
 -- -------------------------------------------------------

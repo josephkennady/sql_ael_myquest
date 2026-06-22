@@ -1,6 +1,10 @@
-SELECT 
+SELECT
 	f.user_type,
+	f.user_type_e,
 	f.is_ple,
+	f.is_ple_e,
+	f.ple_enabled,
+	f.ple_enabled_e,
 	f.rounded_completion,
 	f.gender,
 	f.centre_name,
@@ -20,8 +24,7 @@ FROM
 (SELECT
 -- 	a.user_id AS tlo_users_id,
 -- 	a.created_at AS created_at,
--- 	a.user_type AS user_type,
-	
+	a.user_type AS user_type,	
 CASE
 	WHEN user_type = 1 THEN 'Admin'
 	WHEN
@@ -33,13 +36,13 @@ THEN
 	WHEN user_type = 3 THEN 'Learner'
 	WHEN user_type = 4 THEN 'Alumni'
 	ELSE 'Missing Data'
-END AS user_type,
+END AS user_type_e,
 	
-	-- a.is_ple AS is_ple,
+	a.is_ple AS is_ple,
   CASE
       WHEN a.is_ple = 1 THEN 'PLE'
       ELSE 'Non-PLE'
-  END AS is_ple,
+  END AS is_ple_e,
 -- 	a.project_combos,
 -- 	a.total_allocated AS a_overa_less_asses_c,
 -- 	a.total_assessments_allocated AS a_overa_assess_c,
@@ -58,13 +61,18 @@ END AS user_type,
 	b.trade,
 	b.batch_name,
 	b.batch_status,
+CASE WHEN
+	b.batch_status = 1 THEN 'In Batch'
+WHEN b.batch_status = 0 THEN 'Not in Batch'
+ELSE 'Missing Data'
+END AS batch_status_e,
 	b.centre_type,
 -- 	b.platform,
-	-- b.ple_enabled,
-	CASE
+	b.ple_enabled,
+CASE
     WHEN b.ple_enabled = 1 THEN 'PLE Centre'
     ELSE 'Non-PLE Centre'
-END AS ple_enabled,
+END AS ple_enabled_e,
 -- 	b.first_login,
 -- 	a.subject_combos,
 -- 	b.is_master_trainer,
@@ -110,9 +118,12 @@ CROSS JOIN JSON_TABLE(
 
 WHERE 1=1
 -- AND a.user_id IN ('0ee51375-509c-41db-8757-f160dad19a44')
+AND JSON_UNQUOTE(
+    JSON_EXTRACT(project_combos, '$[0].prog_name')
+) IN ('MyQuest', 'Quest Experience Lab')
 ) AS f
-GROUP BY 	f.user_type,
-	f.is_ple,
+GROUP BY 	f.user_type_e,
+	f.is_ple_e,
 	f.rounded_completion,
 	f.gender,
 	f.centre_name,

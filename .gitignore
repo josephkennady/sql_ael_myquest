@@ -31,6 +31,7 @@ output/
 sql_queries/centre_ids.sql
 sql_queries/user_ids.sql
 sql_queries/user_ids_incremental.sql
+sql_queries/one_centre.sql
 to_push_to_server.md
 
 # ── macOS ─────────────────────────────────────────────────────
