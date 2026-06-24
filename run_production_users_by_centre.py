@@ -152,13 +152,22 @@ def _get_destination_user_ids(target_table: str) -> set[str]:
         raise
 
 
-def get_incremental_user_ids(target_table: str, overlap_minutes: int) -> list[str]:
-    cutoff_at = get_incremental_cutoff(target_table, overlap_minutes)
-    logging.info(
-        "Incremental user refresh cutoff: %s (%d minute overlap)",
-        cutoff_at,
-        overlap_minutes,
-    )
+def get_incremental_user_ids(
+    target_table: str,
+    overlap_minutes: int,
+    since: str | None = None,
+) -> list[str]:
+    if since:
+        # Manual override: accept YYYY-MM-DD or full YYYY-MM-DD HH:MM:SS
+        cutoff_at = since if len(since) > 10 else since + " 00:00:00"
+        logging.info("Incremental user refresh cutoff: %s (manual --since override)", cutoff_at)
+    else:
+        cutoff_at = get_incremental_cutoff(target_table, overlap_minutes)
+        logging.info(
+            "Incremental user refresh cutoff: %s (%d minute overlap)",
+            cutoff_at,
+            overlap_minutes,
+        )
 
     # Part 1 — cutoff-based: users with new registrations, profile updates, or new activity.
     # Check both created_at and updated_at on each table so that users who
@@ -409,6 +418,7 @@ def run(
     replace_existing_users: bool,
     incremental_users: bool,
     incremental_overlap_minutes: int,
+    since: str | None = None,
 ) -> None:
     if workers < 1:
         raise ValueError("--workers must be 1 or greater")
@@ -428,7 +438,7 @@ def run(
     sql_template = sql_path.read_text()
     if incremental_users:
         id_type = "user"
-        ids = get_incremental_user_ids(target_table, incremental_overlap_minutes)
+        ids = get_incremental_user_ids(target_table, incremental_overlap_minutes, since=since)
         replace_existing_users = True
     elif user_sql_path is not None:
         id_type = "user"
@@ -674,6 +684,16 @@ def parse_args() -> argparse.Namespace:
             f"Default: {DEFAULT_INCREMENTAL_OVERLAP_MINUTES}."
         ),
     )
+    parser.add_argument(
+        "--since",
+        default=None,
+        help=(
+            "Manually set the incremental refresh cutoff date instead of auto-calculating it. "
+            "Accepts YYYY-MM-DD (e.g. 2026-06-17) or YYYY-MM-DD HH:MM:SS. "
+            "All users/activities with created_at OR updated_at >= this date will be refreshed. "
+            "Must be used together with --incremental-users."
+        ),
+    )
     args = parser.parse_args()
     if args.replace_target and args.skip_existing:
         parser.error("--skip-existing cannot be used with --replace-target")
@@ -687,6 +707,12 @@ def parse_args() -> argparse.Namespace:
         parser.error("--incremental-users cannot be used with --replace-target or --skip-existing")
     if args.incremental_overlap_minutes < 0:
         parser.error("--incremental-overlap-minutes must be 0 or greater")
+    if args.since and not args.incremental_users:
+        parser.error("--since requires --incremental-users")
+    if args.since:
+        import re
+        if not re.match(r"^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$", args.since):
+            parser.error("--since must be YYYY-MM-DD or YYYY-MM-DD HH:MM:SS")
     return args
 
 
@@ -706,4 +732,5 @@ if __name__ == "__main__":
         replace_existing_users=args.replace_existing_users,
         incremental_users=args.incremental_users,
         incremental_overlap_minutes=args.incremental_overlap_minutes,
+        since=args.since,
     )
