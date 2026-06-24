@@ -160,34 +160,48 @@ def get_incremental_user_ids(target_table: str, overlap_minutes: int) -> list[st
         overlap_minutes,
     )
 
-    # Part 1 — cutoff-based: users with new registrations or new activity
+    # Part 1 — cutoff-based: users with new registrations, profile updates, or new activity.
+    # Check both created_at and updated_at on each table so that users who
+    # registered before the cutoff but had data changed (batch reassignment,
+    # trade change, career path update, admin correction) are still picked up.
     sql = """
 SELECT DISTINCT user_id AS id
 FROM (
+    -- New registrations OR profile changes (name, type, centre, is_ple, etc.)
     SELECT u.id AS user_id
     FROM users AS u
-    WHERE u.created_at >= %s
+    WHERE (u.created_at >= %s OR u.updated_at >= %s)
       AND u.status = 1
       AND u.deleted_at IS NULL
 
     UNION
 
+    -- Batch or trade reassignment
+    SELECT sd.user_id
+    FROM student_details AS sd
+    WHERE (sd.created_at >= %s OR sd.updated_at >= %s)
+      AND sd.user_id IS NOT NULL
+
+    UNION
+
+    -- New or corrected learner completions
     SELECT la.user_id
     FROM learning_activities AS la
-    WHERE la.created_at >= %s
+    WHERE (la.created_at >= %s OR la.updated_at >= %s)
       AND la.user_id IS NOT NULL
 
     UNION
 
+    -- New or corrected facilitator completions
     SELECT fla.user_id
     FROM facilitator_learning_activities AS fla
-    WHERE fla.created_at >= %s
+    WHERE (fla.created_at >= %s OR fla.updated_at >= %s)
       AND fla.user_id IS NOT NULL
 ) changed_user_ids
 WHERE user_id IS NOT NULL
 ORDER BY user_id
 """
-    ids_df = fetch(SOURCE_DB, sql, (cutoff_at, cutoff_at, cutoff_at))
+    ids_df = fetch(SOURCE_DB, sql, (cutoff_at,) * 8)
     cutoff_ids = set(ids_df["id"].dropna().astype(str).tolist())
     logging.info("Cutoff-based changed users: %d", len(cutoff_ids))
 
