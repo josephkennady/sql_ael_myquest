@@ -139,6 +139,20 @@ WHERE u.type IN (1, 2, 3, 4)
     return set(df["user_id"].dropna().astype(str).tolist())
 
 
+def _get_centre_user_ids(centre_id: str) -> set[str]:
+    """Fetch all active user IDs that belong to a specific centre."""
+    sql = """
+SELECT u.id AS user_id
+FROM users u
+WHERE u.centre_id = %s
+  AND u.type IN (1, 2, 3, 4)
+  AND u.status = 1
+  AND u.deleted_at IS NULL
+"""
+    df = fetch(SOURCE_DB, sql, (centre_id,))
+    return set(df["user_id"].dropna().astype(str).tolist())
+
+
 def _get_destination_user_ids(target_table: str) -> set[str]:
     """Fetch all user IDs already written in the analytics destination table."""
     table_sql = _quote_identifier(target_table)
@@ -156,6 +170,7 @@ def get_incremental_user_ids(
     target_table: str,
     overlap_minutes: int,
     since: str | None = None,
+    centre_id: str | None = None,
 ) -> list[str]:
     if since:
         # Manual override: accept YYYY-MM-DD or full YYYY-MM-DD HH:MM:SS
@@ -227,6 +242,17 @@ ORDER BY user_id
     )
 
     all_ids = cutoff_ids | missing_ids
+
+    # Optional centre filter — restrict to one centre for targeted testing
+    if centre_id:
+        centre_user_ids = _get_centre_user_ids(centre_id)
+        before = len(all_ids)
+        all_ids = all_ids & centre_user_ids
+        logging.info(
+            "Centre filter applied (centre_id=%s): %d → %d users",
+            centre_id, before, len(all_ids),
+        )
+
     logging.info(
         "Total users to refresh: %d (%d from cutoff + %d new/missing)",
         len(all_ids),
@@ -419,6 +445,7 @@ def run(
     incremental_users: bool,
     incremental_overlap_minutes: int,
     since: str | None = None,
+    centre_id: str | None = None,
 ) -> None:
     if workers < 1:
         raise ValueError("--workers must be 1 or greater")
@@ -438,7 +465,7 @@ def run(
     sql_template = sql_path.read_text()
     if incremental_users:
         id_type = "user"
-        ids = get_incremental_user_ids(target_table, incremental_overlap_minutes, since=since)
+        ids = get_incremental_user_ids(target_table, incremental_overlap_minutes, since=since, centre_id=centre_id)
         replace_existing_users = True
     elif user_sql_path is not None:
         id_type = "user"
@@ -694,6 +721,15 @@ def parse_args() -> argparse.Namespace:
             "Must be used together with --incremental-users."
         ),
     )
+    parser.add_argument(
+        "--centre-id",
+        default=None,
+        help=(
+            "Restrict incremental refresh to users belonging to a single centre UUID. "
+            "Useful for testing or re-processing one centre without touching others. "
+            "Must be used together with --incremental-users."
+        ),
+    )
     args = parser.parse_args()
     if args.replace_target and args.skip_existing:
         parser.error("--skip-existing cannot be used with --replace-target")
@@ -709,6 +745,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--incremental-overlap-minutes must be 0 or greater")
     if args.since and not args.incremental_users:
         parser.error("--since requires --incremental-users")
+    if args.centre_id and not args.incremental_users:
+        parser.error("--centre-id requires --incremental-users")
     if args.since:
         import re
         if not re.match(r"^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$", args.since):
@@ -733,4 +771,5 @@ if __name__ == "__main__":
         incremental_users=args.incremental_users,
         incremental_overlap_minutes=args.incremental_overlap_minutes,
         since=args.since,
+        centre_id=args.centre_id,
     )
