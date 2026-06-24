@@ -253,13 +253,26 @@ ORDER BY user_id
             centre_id, before, len(all_ids),
         )
 
+    # Drop any IDs that are not valid UUIDs — corrupt source data should never
+    # crash the pipeline; log each one so it can be investigated.
+    valid_ids: set[str] = set()
+    for uid in all_ids:
+        if uid.strip() and UUID_RE.match(uid):
+            valid_ids.add(uid)
+        else:
+            logging.warning("Skipping invalid user id (not a UUID): %r", uid)
+
+    skipped = len(all_ids) - len(valid_ids)
+    if skipped:
+        logging.warning("Dropped %d non-UUID user ids before processing", skipped)
+
     logging.info(
         "Total users to refresh: %d (%d from cutoff + %d new/missing)",
-        len(all_ids),
+        len(valid_ids),
         len(cutoff_ids - missing_ids),
         len(missing_ids),
     )
-    return list(dict.fromkeys(v for v in all_ids if v.strip()))
+    return list(dict.fromkeys(valid_ids))
 
 
 def get_existing_ids(target_table: str, id_type: str, ids: list[str]) -> set[str]:
@@ -368,7 +381,12 @@ def fetch_result_for_id(
         id_value,
         active_users,
     )
-    scoped_sql = build_sql_for_id(sql_template, id_type, id_value)
+    try:
+        scoped_sql = build_sql_for_id(sql_template, id_type, id_value)
+    except ValueError as exc:
+        logging.warning("Skipping %s %s — invalid id: %s", id_type, id_value, exc)
+        return index, id_value, pd.DataFrame(), None
+
     for attempt in range(retries + 1):
         try:
             result = fetch(SOURCE_DB, scoped_sql)
