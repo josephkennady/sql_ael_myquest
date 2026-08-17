@@ -11,6 +11,9 @@ MySQL-based AEL/MyQuest reporting pipeline. Runs per-centre SQL to build a one-r
 ├── config.py                          ← DB config from .env
 ├── db.py                              ← MySQL connection, SSH tunnel, fetch, write helpers
 ├── run_pipeline.py                    ← Full pipeline orchestrator (run this for cron)
+├── run_incremental_refresh.sh         ← Incremental refresh wrapper (routine run)
+├── run_full_refresh.sh                ← Full rebuild wrapper (all 4 steps, drops the table)
+├── PIPELINE_RUNBOOK.md                ← Every run scenario with copy-paste examples
 ├── run_production_users_by_centre.py  ← Centre/user/incremental refresh engine
 ├── run_user_addon.py                  ← Supplementary user attributes (gender, batch, platform)
 ├── run_cleanup_inactive.py            ← Remove inactive user/centre rows from analytics
@@ -19,7 +22,7 @@ MySQL-based AEL/MyQuest reporting pipeline. Runs per-centre SQL to build a one-r
 ├── sql_queries/
 │   ├── production_user_one_record_subject_project_combo.sql  ← Main one-record SQL
 │   ├── production_user_one_record_subject_project_combo.md   ← CTE walkthrough & ERD notes
-│   ├── production_user_one_record_subject_project_combo.sql  ← Main one-record SQL (duplicate removed)
+│   ├── production_user_one_record_without_career_path.sql     ← PLE-without-career-path variant
 │   ├── sql_filter.sql                 ← Filter dimension table SQL (JSON_TABLE explode + GROUP BY)
 │   ├── centre_ids.sql                 ← [gitignored] Full production centre list
 │   ├── centre_ids_limit_10.sql        ← Safe 10-centre example for testing
@@ -120,20 +123,29 @@ python3 run_pipeline.py --workers 6
 
 **How to run a full refresh:**
 ```bash
-# Rebuild from scratch (drops and recreates the table)
+# All 4 steps — drops and rebuilds the table, then user_addon, cleanup, filters
+./run_full_refresh.sh          # prompts for confirmation first
+./run_full_refresh.sh -y       # unattended
+
+# Step 1 only — rebuild the snapshot table without the downstream steps
 python3 run_production_users_by_centre.py \
-  --centre-sql-path sql_queries/centre_ids.sql \
   --target-table production_users_one_record \
+  --limit 0 \
   --replace-target \
   --workers 8
 
-# Resume a partial run (skips centres already written)
+# Backfill only the centres missing from the table (no duplicates, no reprocessing)
 python3 run_production_users_by_centre.py \
-  --centre-sql-path sql_queries/centre_ids.sql \
   --target-table production_users_one_record \
+  --limit 0 \
   --skip-existing \
   --workers 8
 ```
+
+> `--limit 0` uses the built-in `SELECT c.id FROM centres c`, covering every centre.
+> Prefer it over `--centre-sql-path sql_queries/centre_ids.sql`: that file is gitignored
+> local scratch (see Setup Step 4) and is easily left holding a single test centre, which
+> silently narrows a "full" refresh to one centre. Check its contents before relying on it.
 
 ---
 
@@ -153,11 +165,23 @@ python3 run_production_users_by_centre.py \
 
 **How to run manually:**
 ```bash
+# All 4 steps (recommended — this is what cron runs)
+./run_incremental_refresh.sh
+
+# Pin the cutoff instead of deriving it — e.g. catching up after a gap
+./run_incremental_refresh.sh --since-days 5
+
+# Step 1 only
 python3 run_production_users_by_centre.py \
   --target-table production_users_one_record \
   --incremental-users \
   --workers 4
 ```
+
+> The derived cutoff is `MAX(created_at)` from the destination table, and that column
+> holds `users.created_at` — the newest *registration* in the snapshot, not the time the
+> pipeline last ran. It is always at or before the last run, so nothing is missed, but use
+> `--since-days N` when you want a predictable fixed lookback.
 
 ---
 
@@ -187,8 +211,14 @@ Are there users in source that are missing from the analytics table?
 ```bash
 cp .env.example .env        # fill in DB and SSH credentials
 pip install -r requirements.txt
-python3 run_pipeline.py --workers 6
+
+./run_incremental_refresh.sh    # routine run — all 4 steps
+./run_full_refresh.sh           # full rebuild from scratch
 ```
+
+For every other scenario — backfilling missing centres, refreshing one centre, catching up
+after a multi-day gap, fixing duplicates, testing against a scratch table — see
+**[PIPELINE_RUNBOOK.md](PIPELINE_RUNBOOK.md)**.
 
 The orchestrator auto-detects first run vs incremental:
 
@@ -199,7 +229,12 @@ The orchestrator auto-detects first run vs incremental:
 
 ## Full Pipeline Orchestrator
 
-`run_pipeline.py` is the single entry point for the daily pipeline. It runs three steps in order, streams all output to a timestamped log file, and emails the result on completion.
+`run_pipeline.py` is the single entry point for the daily pipeline. It runs four steps in order, streams all output to a timestamped log file, and emails the result on completion.
+
+> **Steps 2-4 run even if step 1 fails.** The orchestrator records each step's result and
+> carries on, so a failed refresh still rebuilds `sql_ael_filters` off the stale snapshot and
+> emails a partly-green summary. Always check the `PIPELINE SUMMARY` block at the end of the
+> log rather than assuming the email means success.
 
 ### Steps
 
@@ -225,6 +260,12 @@ This means you can deploy to a new server and run `python3 run_pipeline.py` once
 # Standard daily run
 python3 run_pipeline.py --workers 6
 
+# Pin the incremental cutoff to a fixed lookback (cron-friendly)
+python3 run_pipeline.py --workers 6 --since-days 5
+
+# Pin it to a specific date instead
+python3 run_pipeline.py --workers 6 --since 2026-08-06
+
 # Preview what cleanup would delete (no writes)
 python3 run_pipeline.py --workers 6 --dry-run
 
@@ -240,6 +281,10 @@ python3 run_pipeline.py --target-table production_users_one_record_test --worker
 ```text
 --target-table        Analytics table name used across all steps. Default: production_users_one_record
 --workers             Parallel workers for the refresh step. Default: 4
+--since               Pin the incremental cutoff to YYYY-MM-DD or YYYY-MM-DD HH:MM:SS.
+                      Ignored when the table is missing (that run is a full refresh).
+--since-days          Pin the incremental cutoff to N days before now. Mutually exclusive
+                      with --since. Preferred in cron — no % escaping or date arithmetic.
 --dry-run             Preview cleanup deletes without applying them.
 --no-email            Skip the email report for this run.
 --monitor-interval    Seconds between CPU/RAM log lines. Default: 30
@@ -340,14 +385,33 @@ python3 run_production_users_by_centre.py \
 --user-sql-path               SQL file returning user IDs in column 1. Mutually exclusive with --centre-sql-path and --incremental-users.
 --incremental-users           Auto-detect recently changed users from destination MAX(created_at). Deletes and reinserts affected rows.
 --target-table                Destination table name. Default: production_users_one_record
---limit                       Centre count when no SQL file is given. Default: 10. Use 0 for all.
---replace-target              Drop and recreate the target table on the first write.
+--limit                       Centre count when no SQL file is given. Default: 10. Use 0 for all centres.
+--replace-target              Drop and recreate the target table on the first non-empty write.
 --skip-existing               Skip centre/user IDs already in the destination table.
---replace-existing-users      Delete existing rows for each user before inserting (--user-sql-path only).
+--replace-existing-users      Delete existing rows for each ID before inserting. Requires
+                              --user-sql-path or --centre-sql-path. Implied by --incremental-users.
 --workers                     Parallel source-query workers. Default: 1.
 --retries                     Retries for a failed centre/user query. Default: 1.
---incremental-overlap-minutes Safety overlap minutes for incremental cutoff. Default: 15.
+--incremental-overlap-minutes Safety overlap minutes for incremental cutoff. Default: 5.
+--since                       Override the incremental cutoff with a fixed date. Requires --incremental-users.
+--centre-id                   Restrict an incremental refresh to one centre UUID. Requires --incremental-users.
 ```
+
+### How Each Mode Writes to the Table
+
+This is the single most important thing to get right — the wrong combination silently
+duplicates rows, because tables are created with **no primary key or unique index**.
+
+| Flags | Write behaviour | Risk |
+|---|---|---|
+| *(none)* | Plain `INSERT` — appends | **Duplicates every row for any ID already in the table** |
+| `--replace-target` | `DROP` + `CREATE` on first non-empty result, then appends | Table is empty/partial until the run finishes |
+| `--skip-existing` | Appends, but drops IDs already present | Safe. Never updates existing data |
+| `--replace-existing-users` | `DELETE` for that ID, then insert, in one transaction | Safe. The correct way to refresh in place |
+| `--incremental-users` | Same as above, per user (implies `--replace-existing-users`) | Safe |
+
+Writes are atomic per ID — all of a centre's rows are inserted on one connection and
+committed once, so a centre is either fully present or fully absent, never half-loaded.
 
 ---
 
@@ -536,10 +600,22 @@ crontab -e
 Add (runs at 2:00 AM daily):
 
 ```
-0 2 * * * cd /path/to/pipeline && python3 run_pipeline.py --workers 6 >> logs/cron.log 2>&1
+0 2 * * * PYTHON=/usr/bin/python3 /path/to/pipeline/run_incremental_refresh.sh >> /path/to/pipeline/logs/cron.log 2>&1
+```
+
+With a fixed lookback window instead of the derived cutoff:
+
+```
+0 2 * * * PYTHON=/usr/bin/python3 /path/to/pipeline/run_incremental_refresh.sh --since-days 2 >> /path/to/pipeline/logs/cron.log 2>&1
 ```
 
 `run_pipeline.py` saves a full timestamped log to `logs/` and emails it. The `>> logs/cron.log` captures startup errors before the logger initialises.
+
+Three cron-specific notes:
+
+- **`PYTHON=/usr/bin/python3`** — cron runs with a minimal `PATH` and may not find `python3`. Both wrapper scripts honour this variable. They also `cd` to their own directory, so `.env` and the relative SQL paths resolve.
+- **Never put `date` output in the crontab.** Cron treats `%` as a newline, so `date +%Y-%m-%d` must be written `date +\%Y-\%m-\%d` — a common silent breakage. And `date -d '5 days ago'` is GNU-only. `--since-days N` avoids both.
+- **Use absolute paths for the redirect.** `>> logs/cron.log` resolves against cron's working directory (usually `$HOME`), not the pipeline folder.
 
 Verify:
 

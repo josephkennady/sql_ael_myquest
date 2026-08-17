@@ -28,6 +28,7 @@ import argparse
 import datetime
 import logging
 import os
+import re
 import smtplib
 import subprocess
 import sys
@@ -236,7 +237,40 @@ def parse_args() -> argparse.Namespace:
         default=30,
         help="Seconds between system resource log lines. Default: 30",
     )
-    return parser.parse_args()
+    cutoff_group = parser.add_mutually_exclusive_group()
+    cutoff_group.add_argument(
+        "--since",
+        default=None,
+        help=(
+            "Pin the incremental cutoff to a fixed date instead of deriving it from "
+            "MAX(created_at). Accepts YYYY-MM-DD or YYYY-MM-DD HH:MM:SS. "
+            "Ignored when the target table is missing (that run is a full refresh)."
+        ),
+    )
+    cutoff_group.add_argument(
+        "--since-days",
+        type=int,
+        default=None,
+        help=(
+            "Pin the incremental cutoff to N days before now. Cron-friendly alternative "
+            "to --since — no date arithmetic or %% escaping needed in the crontab."
+        ),
+    )
+    args = parser.parse_args()
+
+    if args.since_days is not None:
+        if args.since_days < 0:
+            parser.error("--since-days must be 0 or greater")
+        cutoff = datetime.datetime.now() - datetime.timedelta(days=args.since_days)
+        args.since = cutoff.strftime("%Y-%m-%d %H:%M:%S")
+    elif args.since and not re.match(
+        r"^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$", args.since
+    ):
+        # Validate here rather than letting the child fail — a failed step 1 does
+        # not stop steps 2-4, so a typo would silently rebuild off a stale table.
+        parser.error("--since must be YYYY-MM-DD or YYYY-MM-DD HH:MM:SS")
+
+    return args
 
 
 def main() -> None:
@@ -251,6 +285,11 @@ def main() -> None:
     logging.info("Workers      : %d", args.workers)
     logging.info("Dry run      : %s", args.dry_run)
     logging.info("Monitor      : every %ds", args.monitor_interval)
+    if args.since:
+        source = f"--since-days {args.since_days}" if args.since_days is not None else "--since"
+        logging.info("Cutoff       : %s (pinned via %s)", args.since, source)
+    else:
+        logging.info("Cutoff       : derived from MAX(created_at) in the target table")
 
     log_system_stats("startup")
     stop_monitor = start_monitor(args.monitor_interval)
@@ -269,11 +308,18 @@ def main() -> None:
             "--workers", str(args.workers),
             "--incremental-users",
         ]
+        if args.since:
+            step1_cmd += ["--since", args.since]
     else:
         logging.info(
             "Table '%s' not found — running full centre refresh for first-time populate",
             args.target_table,
         )
+        if args.since:
+            logging.warning(
+                "Cutoff %s ignored — a full centre refresh loads everything regardless.",
+                args.since,
+            )
         step1_label = "1. Full centre refresh (first run)"
         step1_cmd = [
             python, "run_production_users_by_centre.py",
