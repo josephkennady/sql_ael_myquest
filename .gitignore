@@ -58,3 +58,6 @@ cache.duckdb.wal
 
 # Generated per-run by run_centre_refresh_cron.sh (contains a baked-in cutoff date)
 sql_queries/changed_centres.sql
+
+# Per-run retry list generated from a failed run (contains real centre UUIDs)
+sql_queries/retry_centres.sql
