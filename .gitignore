@@ -55,3 +55,6 @@ cache.duckdb
 cache.duckdb.wal
 
 # ── Misc ──────────────────────────────────────────────────────
+
+# Generated per-run by run_centre_refresh_cron.sh (contains a baked-in cutoff date)
+sql_queries/changed_centres.sql

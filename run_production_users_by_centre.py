@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import logging
 import re
 import time
@@ -34,6 +35,74 @@ UUID_RE = re.compile(
 IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_]+$")
 EXISTING_ID_CHUNK_SIZE = 1000
 PROGRESS_BAR_WIDTH = 30
+LOGS_DIR = Path("logs")
+
+# Which source table each id type lives in — used to build the retry SQL file.
+RETRY_SOURCE_TABLE = {"centre": "centres", "user": "users"}
+
+
+class IdTracker:
+    """Record which IDs succeeded and which failed, as the run goes.
+
+    Both files are flushed after every line, so a killed process, a dropped SSH
+    session or a terminal that scrolled past the summary still leaves a complete
+    record on disk. On close, any failures are also written as a ready-to-use SQL
+    file that can be passed straight back in via --centre-sql-path/--user-sql-path.
+    """
+
+    def __init__(self, id_type: str, target_table: str) -> None:
+        LOGS_DIR.mkdir(exist_ok=True)
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.id_type = id_type
+        self.target_table = target_table
+        self.ok_path = LOGS_DIR / f"{id_type}_ok_{stamp}.txt"
+        self.failed_path = LOGS_DIR / f"{id_type}_failed_{stamp}.txt"
+        self.retry_sql_path = LOGS_DIR / f"{id_type}_retry_{stamp}.sql"
+        self._ok_file = self.ok_path.open("w", encoding="utf-8")
+        self._failed_file = self.failed_path.open("w", encoding="utf-8")
+        self._failed_ids: list[str] = []
+
+    def record_ok(self, id_value: str) -> None:
+        self._ok_file.write(f"{id_value}\n")
+        self._ok_file.flush()
+
+    def record_failed(self, id_value: str, error: str) -> None:
+        # Tab-separated so the ID stays trivially cuttable even with messy errors.
+        self._failed_file.write(f"{id_value}\t{str(error).replace(chr(9), ' ')}\n")
+        self._failed_file.flush()
+        self._failed_ids.append(id_value)
+
+    def close(self) -> None:
+        self._ok_file.close()
+        self._failed_file.close()
+
+        if not self._failed_ids:
+            self.failed_path.unlink(missing_ok=True)
+            logging.info("All %s ids succeeded. Recorded in %s", self.id_type, self.ok_path)
+            return
+
+        source_table = RETRY_SOURCE_TABLE.get(self.id_type, "centres")
+        id_list = ",\n".join(f"    '{i}'" for i in self._failed_ids)
+        self.retry_sql_path.write_text(
+            f"-- {len(self._failed_ids)} {self.id_type} ids that failed on "
+            f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S}\n"
+            f"SELECT id FROM {source_table} WHERE id IN (\n{id_list}\n)\n",
+            encoding="utf-8",
+        )
+
+        flag = "--centre-sql-path" if self.id_type == "centre" else "--user-sql-path"
+        logging.error("Failed %s ids written to : %s", self.id_type, self.failed_path)
+        logging.error("Succeeded %s ids in     : %s", self.id_type, self.ok_path)
+        logging.error(
+            "Retry the %d failed %s ids with:\n"
+            "  python3 run_production_users_by_centre.py \\\n"
+            "    %s %s \\\n"
+            "    --target-table %s \\\n"
+            "    --replace-existing-users \\\n"
+            "    --workers 2 --retries 3",
+            len(self._failed_ids), self.id_type,
+            flag, self.retry_sql_path, self.target_table,
+        )
 
 
 def _quote_identifier(identifier: str) -> str:
@@ -528,6 +597,10 @@ def run(
             total_users,
         )
         failed_ids: list[tuple[str, str]] = []
+        tracker = IdTracker(id_type, target_table)
+        logging.info(
+            "Tracking progress in %s and %s", tracker.ok_path, tracker.failed_path
+        )
 
         def log_progress(id_value: str) -> None:
             nonlocal completed_ids, completed_users
@@ -565,6 +638,7 @@ def run(
                     error,
                 )
                 failed_ids.append((id_value, str(error)))
+                tracker.record_failed(id_value, str(error))
                 log_progress(id_value)
                 return
 
@@ -581,11 +655,13 @@ def run(
                     logging.info("%s %s returned no rows after deleting stale rows.", id_type.title(), id_value)
                 else:
                     logging.info("Wrote %d refreshed rows for %s %s", len(result), id_type, id_value)
+                tracker.record_ok(id_value)
                 log_progress(id_value)
                 return
 
             if result.empty:
                 logging.info("%s %s returned no rows. Skipping write.", id_type.title(), id_value)
+                tracker.record_ok(id_value)
                 log_progress(id_value)
                 return
 
@@ -602,6 +678,7 @@ def run(
             write_table(ANALYTICS_DB, result, target_table, if_exists=if_exists)
             target_created = True
             logging.info("Wrote %d rows for %s %s", len(result), id_type, id_value)
+            tracker.record_ok(id_value)
             log_progress(id_value)
 
         if workers == 1:
@@ -628,6 +705,8 @@ def run(
                 retries,
             ):
                 write_result(*result)
+
+        tracker.close()
 
         if failed_ids:
             logging.error("%d %s ids failed and were skipped:", len(failed_ids), id_type)

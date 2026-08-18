@@ -13,6 +13,7 @@ MySQL-based AEL/MyQuest reporting pipeline. Runs per-centre SQL to build a one-r
 ├── run_pipeline.py                    ← Full pipeline orchestrator (run this for cron)
 ├── run_incremental_refresh.sh         ← Incremental refresh wrapper (routine run)
 ├── run_full_refresh.sh                ← Full rebuild wrapper (all 4 steps, drops the table)
+├── run_centre_refresh_cron.sh         ← Centre-wise refresh with layered retries (cron)
 ├── PIPELINE_RUNBOOK.md                ← Every run scenario with copy-paste examples
 ├── run_production_users_by_centre.py  ← Centre/user/incremental refresh engine
 ├── run_user_addon.py                  ← Supplementary user attributes (gender, batch, platform)
@@ -601,6 +602,13 @@ Add (runs at 2:00 AM daily):
 
 ```
 0 2 * * * PYTHON=/usr/bin/python3 /path/to/pipeline/run_incremental_refresh.sh >> /path/to/pipeline/logs/cron.log 2>&1
+```
+
+Centre-wise instead of user-wise — far fewer, larger queries, with automatic
+retry sweeps for centres the source DB rejects:
+
+```
+0 2 * * * PYTHON=/usr/bin/python3 SINCE_DAYS=5 /path/to/pipeline/run_centre_refresh_cron.sh >> /path/to/pipeline/logs/cron.log 2>&1
 ```
 
 With a fixed lookback window instead of the derived cutoff:

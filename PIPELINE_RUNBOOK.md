@@ -24,6 +24,7 @@ For architecture, setup and SQL logic see [README.md](README.md). This document 
 - [Scenario 10 — The without-career-path variant](#scenario-10--the-without-career-path-variant)
 - [Scenario 11 — Recovering from a failed or partial run](#scenario-11--recovering-from-a-failed-or-partial-run)
 - [Scenario 12 — Fixing duplicate rows](#scenario-12--fixing-duplicate-rows)
+- [Scenario 13 — Centre-wise refresh with retry sweeps](#scenario-13--centre-wise-refresh-with-retry-sweeps)
 - [Scheduling with cron](#scheduling-with-cron)
 - [Reading the logs](#reading-the-logs)
 - [Command reference](#command-reference)
@@ -536,6 +537,155 @@ Then rebuild the filter table (Scenario 8), since `sql_ael_filters` inherited th
 
 ---
 
+## Scenario 13 — Centre-wise refresh with retry sweeps
+
+**When:** the per-user incremental run is too slow, or the source DB keeps rejecting queries
+and you want failures retried automatically instead of by hand.
+
+This is the mode to schedule if `run_incremental_refresh.sh` can no longer finish overnight.
+
+### Why centre mode is so much faster
+
+Both modes run the same SQL; they differ only in what they scope it to. The expensive part of
+that SQL — `centre_subject` mapping, lesson eligibility filtering, PLE/non-PLE allocation
+expansion — is **per-centre work**. In user mode you pay it once per user; in centre mode you
+pay it once and every user in the centre rides along.
+
+A real comparison from this pipeline: a 12-day catch-up produced **114,938 changed users**
+spanning **575 centres**. User mode was averaging ~18 seconds per user and had taken three
+days to reach 74%. The same window in centre mode is 575 queries.
+
+The trade is query *weight*: a centre with 1,361 users materialises that whole allocation
+expansion in one MySQL internal temp table. That is what makes concurrency dangerous here —
+see the `--workers` note below.
+
+### Running it
+
+```bash
+./run_centre_refresh_cron.sh                     # last 5 days, the default
+SINCE_DAYS=12 ./run_centre_refresh_cron.sh       # wider catch-up window
+WORKERS=1 SWEEPS=4 ./run_centre_refresh_cron.sh  # source DB under pressure
+NO_EMAIL=1 ./run_centre_refresh_cron.sh          # no email report
+```
+
+What it does, in order:
+
+1. **Regenerates `sql_queries/changed_centres.sql`** for the window. The cutoff is computed in
+   Python (`now - SINCE_DAYS`), so no shell date arithmetic and no `%` escaping in the crontab.
+   The query mirrors the pipeline's own changed-user logic — `created_at` **or** `updated_at`
+   across `users`, `student_details`, `learning_activities`, `facilitator_learning_activities`
+   — then maps those users to their centres.
+2. **Sweep 1** — refreshes every centre in that list with `--replace-existing-users`, so each
+   centre is deleted and reinserted in one transaction.
+3. **Sweeps 2..N** — re-runs only the centres that failed, using the `centre_retry_*.sql` the
+   runner wrote, with `COOLDOWN` seconds between each.
+4. **Steps 2-4** — `user_addon`, cleanup inactive, `sql_ael_filters`.
+5. **Emails** the log, unless `NO_EMAIL=1`.
+
+### The two retry layers
+
+Source-side failures here are usually transient temp-space exhaustion, which clears once
+other queries finish. So retries are deliberately spread out rather than hammered:
+
+| Layer | Control | Default | Spacing | Retries what |
+|---|---|---|---|---|
+| Inner | `RETRIES` | 2 → 3 attempts | ~2s, inside the runner | one centre's query |
+| Outer | `SWEEPS` | 3 | `COOLDOWN`, default 600s | every centre still failing |
+
+**Total attempts per centre = `SWEEPS × (RETRIES + 1)` = 9 with the defaults.** Only the
+centres that are still failing enter each later sweep, so sweeps 2 and 3 are typically tiny.
+
+To spread attempts across a whole night rather than half an hour:
+
+```bash
+COOLDOWN=3600 SWEEPS=4 ./run_centre_refresh_cron.sh   # 4 sweeps an hour apart
+```
+
+### Environment overrides
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SINCE_DAYS` | 5 | Days of change to look back over |
+| `SWEEPS` | 3 | Outer passes over failed centres |
+| `RETRIES` | 2 | Inner retries, so attempts per sweep = `RETRIES + 1` |
+| `COOLDOWN` | 600 | Seconds between sweeps |
+| `WORKERS` | 2 | Parallel source queries |
+| `TARGET_TABLE` | `production_users_one_record` | Analytics table |
+| `SQL_PATH` | main one-record SQL | Snapshot SQL template |
+| `CENTRE_SQL` | `sql_queries/changed_centres.sql` | Where the generated list is written |
+| `PYTHON` | `python3` | Interpreter — set this in cron |
+| `NO_EMAIL` | unset | `1` skips the email report |
+
+### Why `WORKERS` defaults to 2, not 6
+
+Each centre query materialises that centre's entire allocation expansion in a MySQL internal
+temporary table on the RDS instance. Six of those at once exhausts the instance's temp space,
+and queries start dying with a misleading error:
+
+```
+(1146, "Table './rdsdbdata/tmp/#sql3e9_19c24_1f' doesn't exist")
+```
+
+Error 1146 normally means "table doesn't exist" — here the "table" is MySQL's own temp file,
+which vanished because the temp space filled. **It is a source-DB capacity problem, not a bug
+in your data or SQL.** Lowering concurrency is the fix; raising it makes the failure rate
+worse. Start at 2 and only go up if a full sweep completes cleanly.
+
+### Exit codes and failure handling
+
+| Outcome | Downstream steps | Exit code |
+|---|---|---|
+| All centres refreshed | Run | 0 |
+| Some centres still failing after every sweep | **Run** — the snapshot is mostly fresh, filters should reflect it | 1 |
+| Sweep 1 exits non-zero (crash, bad args, killed) | **Skipped** — aborts rather than rebuilding filters off an unrefreshed snapshot | the runner's code |
+
+If centres remain, the script prints the leftover retry file and the user-mode fallback.
+
+### A centre that fails every sweep
+
+A centre large enough to exhaust temp space on its own will not be rescued by lower
+concurrency. Switch that one to user mode, where each query handles a single user and the
+temp tables stay small:
+
+```bash
+python3 run_production_users_by_centre.py \
+  --target-table production_users_one_record \
+  --incremental-users \
+  --centre-id <failing-centre-uuid> \
+  --since 1970-01-01 \
+  --workers 4
+```
+
+`--since 1970-01-01` makes every user in that centre eligible, giving full centre coverage
+processed one user at a time. Slower, but it completes.
+
+### Two caveats inherited from centre mode
+
+**Users with `centre_id IS NULL` are unreachable.** The SQL filters on
+`u.centre_id = p.centre_id` and no centre ID matches NULL. Check whether you have any:
+
+```sql
+SELECT COUNT(*) FROM users WHERE centre_id IS NULL AND status = 1 AND deleted_at IS NULL;
+```
+
+If non-zero, run a periodic user-mode pass (Scenario 1) alongside this one.
+
+**A user who moved between centres can end up duplicated.** Refreshing their new centre
+deletes rows `WHERE centre_id = <new>`, but their old rows sit under the old centre_id and
+survive until that centre is also refreshed. Check after a run:
+
+```sql
+SELECT user_id, COUNT(DISTINCT centre_id) c
+FROM production_users_one_record
+GROUP BY user_id HAVING c > 1 LIMIT 20;
+```
+
+Centre mode is strictly *more* complete in every other respect — it refreshes all users in a
+touched centre, including ones whose source data changed without `updated_at` being bumped,
+which user mode can never detect.
+
+---
+
 ## Scheduling with cron
 
 ```bash
@@ -553,6 +703,15 @@ With a fixed 2-day lookback:
 ```
 0 2 * * * PYTHON=/usr/bin/python3 /path/to/pipeline/run_incremental_refresh.sh --since-days 2 >> /path/to/pipeline/logs/cron.log 2>&1
 ```
+
+Centre-wise instead, with automatic retry sweeps (Scenario 13) — use this when the per-user
+run can no longer finish overnight:
+
+```
+0 2 * * * PYTHON=/usr/bin/python3 SINCE_DAYS=5 /path/to/pipeline/run_centre_refresh_cron.sh >> /path/to/pipeline/logs/cron.log 2>&1
+```
+
+Pick **one** of these as your scheduled job — running both on the same table wastes work.
 
 **Three cron-specific traps:**
 
@@ -594,6 +753,21 @@ ls -lt /path/to/pipeline/logs/pipeline_*.log | head -5
 | `All requested centre ids already exist. Nothing to write.` | The run was a no-op |
 | `PIPELINE SUMMARY` | Per-step PASS/FAIL — the authoritative result |
 
+### Failed/succeeded ID files
+
+Every run of `run_production_users_by_centre.py` writes, as it goes:
+
+| File | Contents |
+|---|---|
+| `logs/<type>_ok_<ts>.txt` | IDs that completed, one per line |
+| `logs/<type>_failed_<ts>.txt` | `<id><TAB><error>` for each failure |
+| `logs/<type>_retry_<ts>.sql` | Ready to pass back as `--centre-sql-path`/`--user-sql-path` |
+
+Both text files are flushed after every line, so a killed process or a dropped SSH session
+still leaves a complete record. The retry `.sql` is written at the end and only when there
+were failures — its absence means the run was clean. The runner also prints the exact retry
+command on exit.
+
 **A green email is not proof of a complete run.** `run_pipeline.py` continues through steps
 2-4 even when step 1 fails, and step 1 exits 0 even when individual centres or users were
 skipped. Check `PIPELINE SUMMARY` and grep for `failed and were skipped`.
@@ -613,9 +787,12 @@ skipped. Check `PIPELINE SUMMARY` and grep for `failed and were skipped`.
 | `./run_incremental_refresh.sh --no-email` | Skip the email report |
 | `./run_full_refresh.sh` | All 4 steps, full rebuild, with confirmation prompt |
 | `./run_full_refresh.sh -y` | Same, unattended |
+| `./run_centre_refresh_cron.sh` | Centre-wise refresh + retry sweeps + steps 2-4 (Scenario 13) |
+| `SINCE_DAYS=12 ./run_centre_refresh_cron.sh` | Same, wider window |
 
-Environment overrides: `WORKERS`, `TARGET_TABLE`, `PYTHON` (both scripts);
-`SQL_PATH`, `ADDON_TABLE`, `FILTER_TABLE` (full refresh only).
+Environment overrides: `WORKERS`, `TARGET_TABLE`, `PYTHON` (all scripts);
+`SQL_PATH`, `ADDON_TABLE`, `FILTER_TABLE` (full refresh); `SINCE_DAYS`, `SWEEPS`, `RETRIES`,
+`COOLDOWN`, `CENTRE_SQL`, `NO_EMAIL` (centre refresh).
 
 ### Step 1 flag combinations
 
@@ -683,6 +860,12 @@ but it means the flag never repairs stale data — only absence.
 
 **`--replace-target` drops the table at the start of the run.** Everything reading it sees
 empty or partial data until the run finishes, and a mid-run failure leaves it that way.
+
+**Error 1146 on the source DB is not a missing table.** A message naming
+`./rdsdbdata/tmp/#sql...` means MySQL's own internal temp table vanished because the RDS
+instance ran out of temp space. It is a concurrency/capacity problem — lower `--workers`,
+do not raise it. Centre mode provokes this far more than user mode because each query is
+much larger.
 
 **`--workers N` does nothing when there is only one ID to process.** A single-centre run is a
 single task no matter the worker count.
