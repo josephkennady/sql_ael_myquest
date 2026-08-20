@@ -29,6 +29,7 @@
 #   WORKERS=2 ./run_full_refresh.sh -y          # gentler on the source DB
 #   WORKERS=8 ./run_full_refresh.sh -y          # fast pass, retries drop to 4
 #   WORKERS=8 RETRY_WORKERS=2 ./run_full_refresh.sh -y
+#   CENTRE_SQL=sql_queries/main_centre_list.sql ./run_full_refresh.sh -y
 #   SWEEPS=5 COOLDOWN=1800 ./run_full_refresh.sh -y
 #   TARGET_TABLE=production_users_one_record_new ./run_full_refresh.sh -y
 #
@@ -56,6 +57,8 @@ TARGET_TABLE="${TARGET_TABLE:-production_users_one_record}"
 SQL_PATH="${SQL_PATH:-sql_queries/production_user_one_record_subject_project_combo.sql}"
 ADDON_TABLE="${ADDON_TABLE:-user_addon}"
 FILTER_TABLE="${FILTER_TABLE:-sql_ael_filters}"
+# Optional curated centre list. Unset = every centre via --limit 0.
+CENTRE_SQL="${CENTRE_SQL:-}"
 SWEEPS="${SWEEPS:-3}"
 # Retry sweeps deliberately run at LOWER concurrency than the initial pass. The
 # centres that fail are the large ones, so a retry runs several big queries at
@@ -146,11 +149,25 @@ main() {
 
     local marker; marker="$(mktemp)"; sleep 1
 
+    # Centre source: a curated SQL file if CENTRE_SQL is set, else every centre.
+    local -a centre_source
+    if [ -n "$CENTRE_SQL" ]; then
+        if [ ! -f "$CENTRE_SQL" ]; then
+            echo "$(stamp) CENTRE_SQL file not found: $CENTRE_SQL"
+            return 2
+        fi
+        centre_source=(--centre-sql-path "$CENTRE_SQL")
+        echo "$(stamp) Centre list  : $CENTRE_SQL"
+    else
+        centre_source=(--limit 0)
+        echo "$(stamp) Centre list  : all centres (--limit 0)"
+    fi
+
     run_step "1. Full centre refresh" \
         "$PYTHON" run_production_users_by_centre.py \
         --sql-path "$SQL_PATH" \
         --target-table "$TARGET_TABLE" \
-        --limit 0 \
+        "${centre_source[@]}" \
         --replace-target \
         --retries "$RETRIES" \
         --workers "$WORKERS"
