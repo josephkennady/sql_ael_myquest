@@ -146,7 +146,16 @@ def run_step(label: str, cmd: list[str]) -> bool:
 # Email sender
 # ─────────────────────────────────────────────────────────────────────────────
 
-def send_email(subject: str, log_path: Path) -> None:
+def send_email(
+    subject: str,
+    log_path: Path,
+    extra_attachments: list[Path] | None = None,
+) -> None:
+    """Email the run log, plus any extra files (e.g. succeeded/failed id lists).
+
+    Missing or empty extra attachments are skipped rather than raising — a report
+    that arrives without one list is far more useful than no report at all.
+    """
     smtp_host = os.getenv("PIPELINE_EMAIL_SMTP_HOST", "")
     smtp_port = int(os.getenv("PIPELINE_EMAIL_SMTP_PORT", "587"))
     smtp_user = os.getenv("PIPELINE_EMAIL_SMTP_USER", "")
@@ -181,6 +190,17 @@ def send_email(subject: str, log_path: Path) -> None:
     msg.get_payload()[-1].add_header(
         "Content-Disposition", "attachment", filename=log_path.name
     )
+
+    for extra in extra_attachments or []:
+        try:
+            if not extra.exists() or extra.stat().st_size == 0:
+                continue
+            msg.attach(MIMEText(extra.read_text(encoding="utf-8"), "plain", "utf-8"))
+            msg.get_payload()[-1].add_header(
+                "Content-Disposition", "attachment", filename=extra.name
+            )
+        except Exception as exc:
+            logging.warning("Could not attach %s: %s", extra, exc)
 
     try:
         with smtplib.SMTP(smtp_host, smtp_port) as server:

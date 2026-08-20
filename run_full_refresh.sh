@@ -41,7 +41,10 @@
 #     RENAME TABLE it into place.
 #   * Users with centre_id IS NULL are not reachable in centre mode — they are
 #     only picked up by the incremental (per-user) path.
-#   * No email is sent; the full log is written to logs/full_refresh_*.log.
+#   * On completion an email report is sent (unless NO_EMAIL=1) with three
+#     attachments: the run log, the list of centres that succeeded, and the list
+#     still failing. Uses the same PIPELINE_EMAIL_* settings from .env as the
+#     pipeline. An empty failed list is skipped rather than attached.
 
 set -euo pipefail
 
@@ -79,7 +82,12 @@ for arg in "$@"; do
 done
 
 mkdir -p logs
-LOG="logs/full_refresh_$(date +%Y-%m-%d_%H-%M-%S).log"
+STAMP="$(date +%Y-%m-%d_%H-%M-%S)"
+LOG="logs/full_refresh_${STAMP}.log"
+SUCCEEDED_LIST="logs/full_refresh_${STAMP}_succeeded_centres.txt"
+FAILED_LIST="logs/full_refresh_${STAMP}_failed_centres.txt"
+# Reference point for "tracker files written by this run", set before anything runs.
+START_MARKER="$(mktemp)"
 
 stamp() { date "+%Y-%m-%d %H:%M:%S"; }
 
@@ -196,6 +204,15 @@ main() {
 
     rm -f "$marker"
 
+    # Authoritative failed list: whatever the loop was still holding when it
+    # stopped. A cleared sweep writes no centre_failed_*.txt, so picking the
+    # newest such file on disk would report already-fixed centres as broken.
+    if [ "$OUTSTANDING" -gt 0 ] && [ -n "$retry_sql" ]; then
+        grep -oE "'[^']+'" "$retry_sql" | tr -d "'" > "$FAILED_LIST"
+    else
+        : > "$FAILED_LIST"
+    fi
+
     run_step "2. User addon" \
         "$PYTHON" run_user_addon.py \
         --target-table "$ADDON_TABLE"
@@ -239,10 +256,50 @@ main 2>&1 | tee -a "$LOG"
 status=${PIPESTATUS[0]}
 set -e
 
+# ── Consolidate this run's centre lists ──────────────────────────────────────
+# The runner writes one ok/failed pair per pass; the union of the ok files is
+# every centre that landed, and the newest failed file is what is still broken.
+find logs -maxdepth 1 -name 'centre_ok_*.txt' -newer "$START_MARKER" -print0 2>/dev/null \
+    | xargs -0 cat 2>/dev/null | sort -u > "$SUCCEEDED_LIST" || true
+
+# main() writes FAILED_LIST once its sweep loop settles. If it aborted before
+# that (a failed step), fall back to the newest failed file from this run.
+if [ ! -f "$FAILED_LIST" ]; then
+    LATEST_FAILED="$(find logs -maxdepth 1 -name 'centre_failed_*.txt' -newer "$START_MARKER" 2>/dev/null | sort | tail -1)"
+    if [ -n "$LATEST_FAILED" ] && [ -s "$LATEST_FAILED" ]; then
+        cut -f1 "$LATEST_FAILED" > "$FAILED_LIST"
+    else
+        : > "$FAILED_LIST"
+    fi
+fi
+rm -f "$START_MARKER"
+
+SUCCEEDED_COUNT=$(wc -l < "$SUCCEEDED_LIST" | tr -d ' ')
+FAILED_COUNT=$(wc -l < "$FAILED_LIST" | tr -d ' ')
+
 if [ "$status" -eq 0 ]; then
-    echo "$(stamp) FULL REFRESH SUCCESS — log: $LOG" | tee -a "$LOG"
+    RESULT="SUCCESS"
 else
-    echo "$(stamp) FULL REFRESH FAILED (exit $status) — log: $LOG" | tee -a "$LOG"
+    RESULT="FAILED"
+fi
+{
+  echo "$(stamp) FULL REFRESH $RESULT — log: $LOG"
+  echo "$(stamp) Centres succeeded: $SUCCEEDED_COUNT  -> $SUCCEEDED_LIST"
+  echo "$(stamp) Centres failed   : $FAILED_COUNT  -> $FAILED_LIST"
+} | tee -a "$LOG"
+
+# ── Email report ─────────────────────────────────────────────────────────────
+if [ "${NO_EMAIL:-0}" != "1" ]; then
+    "$PYTHON" - "$RESULT" "$STAMP" "$LOG" "$SUCCEEDED_LIST" "$FAILED_LIST" \
+        "$SUCCEEDED_COUNT" "$FAILED_COUNT" "$TARGET_TABLE" <<'PY' || echo "(email step failed, continuing)"
+import sys
+from pathlib import Path
+from run_pipeline import send_email
+
+result, stamp, log_path, ok_list, failed_list, ok_n, failed_n, table = sys.argv[1:9]
+subject = f"[AEL Full Refresh] {result} — {table} — {ok_n} ok / {failed_n} failed — {stamp}"
+send_email(subject, Path(log_path), [Path(ok_list), Path(failed_list)])
+PY
 fi
 
 exit "$status"

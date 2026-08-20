@@ -54,6 +54,9 @@ CENTRE_SQL="${CENTRE_SQL:-sql_queries/changed_centres.sql}"
 mkdir -p logs
 STAMP="$(date +%Y-%m-%d_%H-%M-%S)"
 LOG="logs/centre_refresh_${STAMP}.log"
+SUCCEEDED_LIST="logs/centre_refresh_${STAMP}_succeeded_centres.txt"
+FAILED_LIST="logs/centre_refresh_${STAMP}_failed_centres.txt"
+START_MARKER="$(mktemp)"
 
 stamp() { date "+%Y-%m-%d %H:%M:%S"; }
 
@@ -181,6 +184,12 @@ main() {
         fi
     done
 
+    if [ "$outstanding" -gt 0 ] && [ -n "$current_sql" ] && [ "$current_sql" != "$CENTRE_SQL" ]; then
+        grep -oE "'[^']+'" "$current_sql" | tr -d "'" > "$FAILED_LIST"
+    else
+        : > "$FAILED_LIST"
+    fi
+
     # ── Downstream steps ─────────────────────────────────────────────────────
     # These run even with centres outstanding: the snapshot is mostly refreshed
     # and the filter table should reflect it. The exit code still reports failure.
@@ -215,13 +224,24 @@ else
 fi
 echo "$(stamp) CENTRE REFRESH $RESULT — log: $LOG" | tee -a "$LOG"
 
+find logs -maxdepth 1 -name 'centre_ok_*.txt' -newer "$START_MARKER" -print0 2>/dev/null \
+    | xargs -0 cat 2>/dev/null | sort -u > "$SUCCEEDED_LIST" || true
+[ -f "$FAILED_LIST" ] || : > "$FAILED_LIST"
+rm -f "$START_MARKER"
+
+SUCCEEDED_COUNT=$(wc -l < "$SUCCEEDED_LIST" | tr -d ' ')
+FAILED_COUNT=$(wc -l < "$FAILED_LIST" | tr -d ' ')
+echo "$(stamp) Centres succeeded: $SUCCEEDED_COUNT | failed: $FAILED_COUNT" | tee -a "$LOG"
+
 if [ "${NO_EMAIL:-0}" != "1" ]; then
-    "$PYTHON" - "$RESULT" "$STAMP" "$LOG" <<'PY' || echo "(email step failed, continuing)"
+    "$PYTHON" - "$RESULT" "$STAMP" "$LOG" "$SUCCEEDED_LIST" "$FAILED_LIST" \
+        "$SUCCEEDED_COUNT" "$FAILED_COUNT" <<'PY' || echo "(email step failed, continuing)"
 import sys
 from pathlib import Path
 from run_pipeline import send_email
-result, stamp, log_path = sys.argv[1], sys.argv[2], sys.argv[3]
-send_email(f"[AEL Centre Refresh] {result} — {stamp}", Path(log_path))
+result, stamp, log_path, ok_list, failed_list, ok_n, failed_n = sys.argv[1:8]
+subject = f"[AEL Centre Refresh] {result} — {ok_n} ok / {failed_n} failed — {stamp}"
+send_email(subject, Path(log_path), [Path(ok_list), Path(failed_list)])
 PY
 fi
 
