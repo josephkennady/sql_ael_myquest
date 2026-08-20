@@ -27,6 +27,8 @@
 #   ./run_full_refresh.sh                    # prompts before dropping the table
 #   ./run_full_refresh.sh -y                 # skip the prompt (unattended / cron)
 #   WORKERS=2 ./run_full_refresh.sh -y          # gentler on the source DB
+#   WORKERS=8 ./run_full_refresh.sh -y          # fast pass, retries drop to 4
+#   WORKERS=8 RETRY_WORKERS=2 ./run_full_refresh.sh -y
 #   SWEEPS=5 COOLDOWN=1800 ./run_full_refresh.sh -y
 #   TARGET_TABLE=production_users_one_record_new ./run_full_refresh.sh -y
 #
@@ -52,8 +54,20 @@ SQL_PATH="${SQL_PATH:-sql_queries/production_user_one_record_subject_project_com
 ADDON_TABLE="${ADDON_TABLE:-user_addon}"
 FILTER_TABLE="${FILTER_TABLE:-sql_ael_filters}"
 SWEEPS="${SWEEPS:-3}"
+# Retry sweeps deliberately run at LOWER concurrency than the initial pass. The
+# centres that fail are the large ones, so a retry runs several big queries at
+# once — heavier on the source DB's temp space than the mixed initial pass.
+# Retrying at the same concurrency mostly reproduces the same failure.
+RETRY_WORKERS="${RETRY_WORKERS:-}"
 RETRIES="${RETRIES:-2}"
 COOLDOWN="${COOLDOWN:-600}"
+
+# Default: half the initial workers, floor of 1, never more than the initial value.
+if [ -z "$RETRY_WORKERS" ]; then
+    RETRY_WORKERS=$(( WORKERS / 2 ))
+    [ "$RETRY_WORKERS" -lt 1 ] && RETRY_WORKERS=1
+fi
+[ "$RETRY_WORKERS" -gt "$WORKERS" ] && RETRY_WORKERS="$WORKERS"
 
 ASSUME_YES=0
 for arg in "$@"; do
@@ -116,7 +130,7 @@ main() {
     echo "$(stamp) FULL REFRESH started"
     echo "$(stamp) Target table : $TARGET_TABLE  (will be DROPPED and rebuilt)"
     echo "$(stamp) Snapshot SQL : $SQL_PATH"
-    echo "$(stamp) Workers      : $WORKERS"
+    echo "$(stamp) Workers      : $WORKERS (retry sweeps: $RETRY_WORKERS)"
     echo "$(stamp) Retry plan   : initial pass + up to $SWEEPS retry sweep(s), $((RETRIES + 1)) attempts each"
     echo "$(stamp)                (worst case $(( (SWEEPS + 1) * (RETRIES + 1) )) attempts per centre)"
     echo "$(stamp) Cooldown     : ${COOLDOWN}s between sweeps"
@@ -177,7 +191,7 @@ main() {
             --centre-sql-path "$retry_sql" \
             --replace-existing-users \
             --retries "$RETRIES" \
-            --workers "$WORKERS"
+            --workers "$RETRY_WORKERS"
     done
 
     rm -f "$marker"
