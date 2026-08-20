@@ -25,6 +25,7 @@ MySQL-based AEL/MyQuest reporting pipeline. Runs per-centre SQL to build a one-r
 │   ├── production_user_one_record_subject_project_combo.md   ← CTE walkthrough & ERD notes
 │   ├── production_user_one_record_without_career_path.sql     ← PLE-without-career-path variant
 │   ├── sql_filter.sql                 ← Filter dimension table SQL (JSON_TABLE explode + GROUP BY)
+│   ├── main_centre_list.sql           ← Curated centre list (2 programs, no test/demo)
 │   ├── centre_ids.sql                 ← [gitignored] Full production centre list
 │   ├── centre_ids_limit_10.sql        ← Safe 10-centre example for testing
 │   ├── user_addon.sql                 ← Supplementary user attributes query
@@ -99,6 +100,7 @@ python3 run_pipeline.py --workers 6
 |---|---|---|
 | All `.py` scripts | Yes | Safe — no credentials |
 | `sql_queries/*.sql` (most) | Yes | Safe |
+| `sql_queries/main_centre_list.sql` | Yes | Derives centres by query; holds program IDs only |
 | `sql_queries/centre_ids.sql` | **No** | Contains real production centre UUIDs |
 | `sql_queries/user_ids.sql` | **No** | Contains real user UUIDs |
 | `.env` | **No** | Contains DB passwords and hostnames |
