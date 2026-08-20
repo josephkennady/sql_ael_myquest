@@ -34,6 +34,16 @@ Usage:
         --user-sql-path sql_queries/user_ids.sql \
         --exclude-lesson-types 'mp4'
 
+    # Every user of one centre, in a single query
+    python3 run_user_lesson_export.py \
+        --centre-id 00000000-0000-0000-0000-000000000000 \
+        --all-lesson-types \
+        --out output/centre_lessons.csv
+
+    # Same, but one query per user (for a centre too large for a single query)
+    python3 run_user_lesson_export.py \
+        --centre-id 00000000-0000-0000-0000-000000000000 --per-user --workers 4
+
     # Subject-level instead of lesson-level
     python3 run_user_lesson_export.py \
         --user-sql-path sql_queries/user_ids.sql \
@@ -108,10 +118,71 @@ ADDON_COLUMNS = [
     "centre_name",
     "state_name",
     "district_name",
-    "batch_name",
     "trade",
     "gender",
 ]
+
+
+BATCH_SQL = """
+SELECT b.id AS batch_id, b.name AS batch_name
+FROM batches b
+WHERE b.id IN ({placeholders})
+"""
+
+CENTRE_USER_SQL = """
+SELECT u.id
+FROM users u
+WHERE u.centre_id = %s
+  AND u.type IN (1, 2, 3, 4)
+  AND u.status = 1
+  AND u.deleted_at IS NULL
+"""
+
+
+def add_batch_name(df: pd.DataFrame) -> pd.DataFrame:
+    """Resolve batch_name from the source `batches` table using batch_id.
+
+    Read from source rather than user_addon so the name is correct even when the
+    analytics addon table is stale. Unlike user_addon this does not filter out
+    deleted/closed batches — for an extract, a name is more useful than a NULL.
+    """
+    if "batch_id" not in df.columns:
+        logging.warning("No batch_id column in the result — cannot add batch_name.")
+        return df
+
+    batch_ids = sorted({b for b in df["batch_id"].dropna().astype(str) if b.strip()})
+    if not batch_ids:
+        logging.info("No batch_id values present; batch_name will be empty.")
+        df["batch_name"] = None
+        return df
+
+    frames = []
+    for start in range(0, len(batch_ids), EXISTING_ID_CHUNK_SIZE):
+        chunk = batch_ids[start : start + EXISTING_ID_CHUNK_SIZE]
+        placeholders = ", ".join(["%s"] * len(chunk))
+        frames.append(fetch(SOURCE_DB, BATCH_SQL.format(placeholders=placeholders), tuple(chunk)))
+
+    batches = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    if batches.empty:
+        logging.warning("No rows in `batches` matched these batch_ids.")
+        df["batch_name"] = None
+        return df
+
+    batches["batch_id"] = batches["batch_id"].astype(str)
+    df = df.copy()
+    df["batch_id"] = df["batch_id"].astype(str).where(df["batch_id"].notna())
+    merged = df.merge(batches.drop_duplicates("batch_id"), on="batch_id", how="left")
+    logging.info(
+        "Resolved %d batch name(s); %d of %d rows have one",
+        len(batches), merged["batch_name"].notna().sum(), len(merged),
+    )
+    return merged
+
+
+def resolve_centre_user_ids(centre_id: str) -> list[str]:
+    """Active users of one centre — used by --centre-id --per-user."""
+    df = fetch(SOURCE_DB, CENTRE_USER_SQL, (centre_id,))
+    return [u for u in df[df.columns[0]].dropna().astype(str) if UUID_RE.match(u)]
 
 
 def resolve_user_ids(user_sql_path: Path | None, inline_ids: list[str]) -> list[str]:
@@ -170,7 +241,11 @@ def enrich_with_addon(df: pd.DataFrame, addon_table: str) -> pd.DataFrame:
     matched = merged[keep[1]].notna().sum() if len(keep) > 1 else 0
     logging.info("Enriched %d/%d rows from %s", matched, len(merged), addon_table)
 
-    front = ["user_id"] + [c for c in ADDON_COLUMNS if c in merged.columns]
+    front = (
+        ["user_id"]
+        + [c for c in ADDON_COLUMNS if c in merged.columns]
+        + [c for c in ("batch_name",) if c in merged.columns]
+    )
     return merged[front + [c for c in merged.columns if c not in front]]
 
 
@@ -196,6 +271,20 @@ def parse_args() -> argparse.Namespace:
         default=[],
         dest="user_ids",
         help="A single user UUID. Repeat for several. Combines with --user-sql-path.",
+    )
+    parser.add_argument(
+        "--centre-id",
+        default=None,
+        help="Export every user of one centre. Runs a single centre-scoped query "
+             "instead of one per user, which is far faster. Cannot be combined "
+             "with --user-sql-path / --user-id.",
+    )
+    parser.add_argument(
+        "--per-user",
+        action="store_true",
+        help="With --centre-id, resolve the centre's users and query them one at a "
+             "time. Slower, but each query is small — use when a large centre fails "
+             "with a MySQL temp-table error.",
     )
     parser.add_argument(
         "--out",
@@ -238,8 +327,14 @@ def parse_args() -> argparse.Namespace:
     )
     args = parser.parse_args()
 
-    if args.user_sql_path is None and not args.user_ids:
-        parser.error("Provide --user-sql-path and/or at least one --user-id")
+    if args.centre_id and (args.user_sql_path or args.user_ids):
+        parser.error("--centre-id cannot be combined with --user-sql-path / --user-id")
+    if args.centre_id and not UUID_RE.match(args.centre_id):
+        parser.error(f"--centre-id is not a valid UUID: {args.centre_id}")
+    if args.per_user and not args.centre_id:
+        parser.error("--per-user only applies together with --centre-id")
+    if not args.centre_id and args.user_sql_path is None and not args.user_ids:
+        parser.error("Provide --centre-id, --user-sql-path, and/or --user-id")
     if args.workers < 1:
         parser.error("--workers must be 1 or greater")
     if args.retries < 0:
@@ -276,12 +371,27 @@ def main() -> None:
         pool.open(SOURCE_DB)
         pool.open(ANALYTICS_DB)
 
-        user_ids = resolve_user_ids(args.user_sql_path, args.user_ids)
-        if not user_ids:
-            logging.error("No valid user ids to export.")
-            raise SystemExit(1)
+        centre_single_query = bool(args.centre_id) and not args.per_user
 
-        logging.info("Exporting lesson detail for %d users", len(user_ids))
+        if args.centre_id:
+            if args.per_user:
+                user_ids = resolve_centre_user_ids(args.centre_id)
+                if not user_ids:
+                    logging.error("Centre %s has no active users.", args.centre_id)
+                    raise SystemExit(1)
+                logging.info(
+                    "Centre %s: %d active users, one query each", args.centre_id, len(user_ids)
+                )
+            else:
+                user_ids = []
+                logging.info("Centre %s: single centre-scoped query", args.centre_id)
+        else:
+            user_ids = resolve_user_ids(args.user_sql_path, args.user_ids)
+            if not user_ids:
+                logging.error("No valid user ids to export.")
+                raise SystemExit(1)
+            logging.info("Exporting lesson detail for %d users", len(user_ids))
+
         logging.info("SQL template : %s", args.sql_path)
         logging.info("Output CSV   : %s", out_path)
 
@@ -300,7 +410,23 @@ def main() -> None:
                 logging.info("User %s: %d lesson rows", user_id, len(result))
                 frames.append(result)
 
-        if args.workers == 1:
+        if centre_single_query:
+            _, _, result, error = fetch_result_for_id(
+                sql_template, "centre", args.centre_id, 1, 1, 0, args.retries
+            )
+            if error is not None:
+                logging.error("Centre %s failed: %s", args.centre_id, error)
+                logging.error(
+                    "If this is a MySQL temp-table error, retry with --per-user, which "
+                    "splits the centre into one small query per user."
+                )
+                raise SystemExit(1)
+            if result.empty:
+                logging.error("Centre %s returned no rows.", args.centre_id)
+                raise SystemExit(1)
+            logging.info("Centre %s: %d lesson rows", args.centre_id, len(result))
+            frames.append(result)
+        elif args.workers == 1:
             for index, user_id in enumerate(user_ids, start=1):
                 collect(
                     *fetch_result_for_id(
@@ -318,6 +444,7 @@ def main() -> None:
             raise SystemExit(1)
 
         df = pd.concat(frames, ignore_index=True)
+        df = add_batch_name(df)
         if not args.no_addon:
             df = enrich_with_addon(df, args.addon_table)
 
@@ -327,6 +454,8 @@ def main() -> None:
     logging.info("=" * 70)
     logging.info("Wrote %d rows x %d columns to %s", len(df), len(df.columns), out_path)
     logging.info("Users with data    : %d", df["user_id"].nunique())
+    if "batch_name" in df.columns:
+        logging.info("Distinct batches   : %d", df["batch_name"].nunique(dropna=True))
     if "lesson_type" in df.columns:
         counts = df["lesson_type"].fillna("(none)").value_counts()
         logging.info("Lesson types in CSV: %d", len(counts))

@@ -531,12 +531,25 @@ The main SQL (`production_user_one_record_subject_project_combo.sql`) allocates 
 
 ### PLE Path
 - User: `is_ple = 1`
-- Subject: `is_ple IN (0, 1)` — subjects with `is_ple=0` are included (they apply to all users)
+- Subject: `is_ple IN (0, 1)`
 - Career path: user must have a `ple_career_path_user` record; join via `job_type_id` (FK to `ple_career_paths.id`)
-- For `is_ple=1` subjects only: `subject_ple_career_path` mapping must exist between subject and career path
-- For `is_ple=0` subjects: no `subject_ple_career_path` mapping required
+- **A `subject_ple_career_path` mapping must exist for every subject**, `is_ple = 0` included
 
-Key rule: `(s.is_ple = 0 OR spcp.subject_id IS NOT NULL)` — `is_ple=0` subjects bypass the career path mapping check.
+Key rule: `AND spcp.subject_id IS NOT NULL` — no subject is allocated to a PLE learner
+unless it is mapped to that learner's career path.
+
+> **Changed 2026-08-20.** This condition was previously
+> `(s.is_ple = 0 OR spcp.subject_id IS NOT NULL)`, which skipped the mapping check for
+> `is_ple = 0` subjects and allocated content the app never shows the learner. Verified at
+> centre `39d776b9`: 1,819 lesson rows across 62 learners were allocated to career paths
+> with no mapping, and **exactly zero** had ever been completed — for example
+> "9-Getting Ready for a Job" is not mapped to "I want to start a business", so the app
+> showed 333 lessons where the pipeline counted 354.
+>
+> Removing those rows **shrinks the allocated denominator, so completion percentages rise.**
+> A full refresh is required after this change; incremental runs will not rebuild
+> historical rows. `production_user_one_record_without_career_path.sql` keeps its own
+> deliberately looser rule and is unaffected.
 
 ---
 
