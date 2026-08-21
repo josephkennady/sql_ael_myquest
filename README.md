@@ -119,6 +119,7 @@ python3 run_pipeline.py --workers 6
 |---|---|
 | First time setting up — table does not exist | Needs to process all centres from scratch |
 | SQL allocation logic changed (e.g. `is_ple` rules) | Existing rows were built with old logic — all users need recalculating |
+| Phase attribution logic changed | Phases are stored per row; incremental runs only rebuild users they touch |
 | Source database schema changed (new column, renamed join) | Old rows may have wrong/missing data |
 | New centres added to `centre_ids.sql` | Their users have never been processed |
 | Suspected data corruption or large gap in runs | Safest option is a clean rebuild |
@@ -552,6 +553,45 @@ unless it is mapped to that learner's career path.
 > A full refresh is required after this change; incremental runs will not rebuild
 > historical rows. `production_user_one_record_without_career_path.sql` keeps its own
 > deliberately looser rule and is unaffected.
+
+---
+
+## Phase Attribution
+
+A user's phase reaches the snapshot by one of two routes, unioned in `main_phases`:
+
+| Route | Source | Applies to |
+|---|---|---|
+| `batch_phase_source` | user → `student_details.batch_id` → `batch_phase` → `centre_phase` | learners placed in a batch |
+| `direct_phase_user_source` | `phase_users` → `centre_phase` | learners assigned to a phase with no batch |
+
+Both are needed. Batch-driven programmes (S2SD and similar) use the first; ITI
+programmes such as S2S Extended Impact, SAP-(FRSN), Publicis and LinkedIn assign
+learners to a phase directly and often have no batch at all.
+
+> **Fixed 2026-08-21.** The direct route was dead code for its entire life, for two
+> compounding reasons:
+>
+> 1. `direct_phase_user_source` emits `p_batch_id = NULL`, and the join back in
+>    `user_project_phase_rows` read `ON ph.p_batch_id = u.batch_id`. **`NULL = NULL`
+>    is never true in SQL**, so every direct row was discarded. 63,954 active users
+>    with no batch had no phase at all.
+> 2. The CTE joined `centre_phase` on `centre_id` only, ignoring
+>    `phase_users.phase_id`. Fixing (1) alone would have handed every affected user
+>    *every* phase mapped to their centre — turning an under-count into an
+>    over-count. Both fixes must land together.
+>
+> The join is now `ON (ph.p_batch_id IS NULL OR ph.p_batch_id = u.batch_id)`, and
+> the CTE adds `AND cp.phase_id = pu.phase_id`.
+>
+> Verified against two centres: Outreach-Gauribidannur, Phase 11, went 49 → 67
+> (the admin panel exports 65, plus two later registrations), and Bethel Life Miao
+> went 0 → 25. Neither over-assigned: 410 of 413 and 117 of 118 users respectively
+> ended with exactly one phase.
+>
+> **A full refresh is required.** Phase-filtered dashboards will show more learners
+> afterwards — for phase S2SD-2026-2027-(Phase 11) alone the total moves from 1,050
+> to 1,281 across 22 centres, and some centres go from zero to their full cohort.
 
 ---
 

@@ -777,6 +777,9 @@ direct_phase_user_source AS (
         ON u.user_id = pu.user_id
     JOIN centre_phase cp
         ON cp.centre_id = u.centre_id
+       -- Honour the phase the user was actually assigned to. Without this the
+       -- join returns EVERY phase mapped to their centre.
+       AND cp.phase_id = pu.phase_id
     JOIN phases ph
         ON ph.id = cp.phase_id
     JOIN phase_project pp
@@ -810,7 +813,13 @@ user_project_phase_rows AS (
     LEFT JOIN main_centre_project cp
         ON cp.centre_id = u.centre_id
     LEFT JOIN main_phases ph
-        ON ph.p_batch_id   = u.batch_id
+        -- direct_phase_user_source emits p_batch_id = NULL because a phase_users
+        -- assignment is not batch-scoped. `NULL = NULL` is never true in SQL, so
+        -- `ph.p_batch_id = u.batch_id` silently discarded every direct row and the
+        -- whole phase_users route was dead: 63,954 active users with no batch had
+        -- no phase at all. A NULL p_batch_id must match any user; batch-derived
+        -- rows still have to match the user's batch.
+        ON (ph.p_batch_id IS NULL OR ph.p_batch_id = u.batch_id)
        AND ph.p_centre_id  = u.centre_id
        AND ph.p_project_id = cp.project_id
        AND ph.p_user_id    = u.user_id

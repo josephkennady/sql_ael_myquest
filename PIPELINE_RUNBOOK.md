@@ -861,6 +861,12 @@ but it means the flag never repairs stale data — only absence.
 **`--replace-target` drops the table at the start of the run.** Everything reading it sees
 empty or partial data until the run finishes, and a mid-run failure leaves it that way.
 
+**A learner's phase can arrive without a batch.** `phase_users` assigns a phase
+directly, with no `student_details.batch_id`. Both that route and the batch route
+feed `main_phases`; if phase counts look low, check whether the affected users have
+a batch at all before suspecting the refresh. See "Phase Attribution" in
+[README.md](README.md).
+
 **Error 1146 on the source DB is not a missing table.** A message naming
 `./rdsdbdata/tmp/#sql...` means MySQL's own internal temp table vanished because the RDS
 instance ran out of temp space. It is a concurrency/capacity problem — lower `--workers`,
