@@ -1,18 +1,21 @@
 -- Superset virtual dataset — Youth | QApp Phoenix - AEL
 --
--- project_combos is an ARRAY. Never address it positionally ($[0]) for filtering:
--- a user's phase can sit in any slot, so $[0].phase silently hides everyone whose
--- phase is not first. Measured on production: of the 49 learners in
--- S2SD-2026-2027-(Phase 11) at one centre, only 28 had it at $[0].
+-- FILTERING CONTRACT
+-- Filter *values* are served by the sql_ael_filters dataset. This dataset receives
+-- the selections only through Jinja filter_values(), and every JSON filter below
+-- uses JSON_SEARCH(..., '$[*].field') so it matches a value in ANY array slot.
 --
--- Two safe patterns:
---   * Jinja filters below  -> JSON_SEARCH(..., '$[*].field')  (matches any slot)
---   * Chart/native filters -> the phase / prog_name / proj_name columns selected
---     below, which COALESCE across all slots. Max JSON_LENGTH(project_combos)
---     observed is 4, hence four slots.
+-- Do NOT expose phase / prog_name / proj_name as columns here, and do NOT create
+-- calculated columns for them. If a column of that name exists, Superset attaches
+-- the native filter to it and emits an extra WHERE on the outer query — which is
+-- how the positional $[0].phase predicate crept in and silently dropped learners
+-- whose phase was not in the first slot. Measured: of 49 learners in
+-- S2SD-2026-2027-(Phase 11) at one centre, 28 had it at $[0] and 21 at $[1], so
+-- the dashboard reported 28. Table-wide, 75,320 users have a phase but only
+-- 61,089 have one at $[0] — roughly 14,200 unreachable by any phase filter.
 --
--- NOTE: JSON_UNQUOTE turns a JSON null into the literal string 'null', so each
--- slot is wrapped in NULLIF(..., 'null') or COALESCE would stop at the first one.
+-- Chart-level filters must not reference project_combos positionally either.
+-- The Jinja block already applies the phase filter correctly inside this query.
 
 SELECT
 	a.user_id AS tlo_users_id,
@@ -40,30 +43,6 @@ END AS ple_enabled_e,
   END AS is_ple_e,
   a.is_ple,
 	a.project_combos,
-
--- ---------------------------------------------------------------------------
--- Non-positional columns for chart / native filters.
--- Use these instead of calculated columns built on $[0].
--- ---------------------------------------------------------------------------
-COALESCE(
-    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[0].phase')), 'null'),
-    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[1].phase')), 'null'),
-    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[2].phase')), 'null'),
-    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[3].phase')), 'null')
-) AS phase,
-COALESCE(
-    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[0].prog_name')), 'null'),
-    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[1].prog_name')), 'null'),
-    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[2].prog_name')), 'null'),
-    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[3].prog_name')), 'null')
-) AS prog_name,
-COALESCE(
-    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[0].proj_name')), 'null'),
-    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[1].proj_name')), 'null'),
-    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[2].proj_name')), 'null'),
-    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[3].proj_name')), 'null')
-) AS proj_name,
-
 	a.total_allocated AS a_overa_less_asses_c,
 	a.total_assessments_allocated AS a_overa_assess_c,
 	a.total_lessons_allocated AS a_overa_lesson_c,
@@ -95,9 +74,10 @@ JOIN quest_analytics.user_addon b ON
 
 	b.user_id = a.user_id
 
--- CHANGED: was JSON_EXTRACT(project_combos, '$[0].prog_name') IN (...), which only
--- inspected the first array entry. No users differ today, but it breaks the moment
--- a user's first combo belongs to another programme.
+-- CHANGED: was JSON_EXTRACT(project_combos, '$[0].prog_name') IN (...), which read
+-- only the first array entry. All 885,098 users pass either way today, because
+-- every first combo currently belongs to MyQuest or Quest Experience Lab — but it
+-- breaks the moment that stops being true.
 AND JSON_VALID(a.project_combos) = 1
 AND (
      JSON_SEARCH(a.project_combos, 'one', 'MyQuest',              NULL, '$[*].prog_name') IS NOT NULL
@@ -165,7 +145,7 @@ AND (
 {% endif %}
 
 -- -------------------------------------------------------
--- project_combos JSON filters (JSON_SEARCH — matches any array slot)
+-- project_combos JSON filters (JSON_SEARCH — matches ANY array slot)
 -- -------------------------------------------------------
 
 {% if prog_name_filter %}
@@ -200,9 +180,6 @@ AND (
 
 -- -------------------------------------------------------
 -- subject_combos JSON filters (JSON_SEARCH)
--- subject_combos has one entry per subject (11+ observed), so there is no safe
--- scalar equivalent. Keep these Jinja-only; do NOT create $[0] calculated
--- columns for sub_name / year_category.
 -- -------------------------------------------------------
 
 {% if sub_name_filter %}
