@@ -1,3 +1,19 @@
+-- Superset virtual dataset — Youth | QApp Phoenix - AEL
+--
+-- project_combos is an ARRAY. Never address it positionally ($[0]) for filtering:
+-- a user's phase can sit in any slot, so $[0].phase silently hides everyone whose
+-- phase is not first. Measured on production: of the 49 learners in
+-- S2SD-2026-2027-(Phase 11) at one centre, only 28 had it at $[0].
+--
+-- Two safe patterns:
+--   * Jinja filters below  -> JSON_SEARCH(..., '$[*].field')  (matches any slot)
+--   * Chart/native filters -> the phase / prog_name / proj_name columns selected
+--     below, which COALESCE across all slots. Max JSON_LENGTH(project_combos)
+--     observed is 4, hence four slots.
+--
+-- NOTE: JSON_UNQUOTE turns a JSON null into the literal string 'null', so each
+-- slot is wrapped in NULLIF(..., 'null') or COALESCE would stop at the first one.
+
 SELECT
 	a.user_id AS tlo_users_id,
 	a.created_at AS created_at,
@@ -24,6 +40,30 @@ END AS ple_enabled_e,
   END AS is_ple_e,
   a.is_ple,
 	a.project_combos,
+
+-- ---------------------------------------------------------------------------
+-- Non-positional columns for chart / native filters.
+-- Use these instead of calculated columns built on $[0].
+-- ---------------------------------------------------------------------------
+COALESCE(
+    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[0].phase')), 'null'),
+    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[1].phase')), 'null'),
+    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[2].phase')), 'null'),
+    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[3].phase')), 'null')
+) AS phase,
+COALESCE(
+    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[0].prog_name')), 'null'),
+    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[1].prog_name')), 'null'),
+    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[2].prog_name')), 'null'),
+    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[3].prog_name')), 'null')
+) AS prog_name,
+COALESCE(
+    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[0].proj_name')), 'null'),
+    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[1].proj_name')), 'null'),
+    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[2].proj_name')), 'null'),
+    NULLIF(JSON_UNQUOTE(JSON_EXTRACT(a.project_combos, '$[3].proj_name')), 'null')
+) AS proj_name,
+
 	a.total_allocated AS a_overa_less_asses_c,
 	a.total_assessments_allocated AS a_overa_assess_c,
 	a.total_lessons_allocated AS a_overa_lesson_c,
@@ -50,12 +90,19 @@ ROUND(a.completion_pct) AS rounded_completion,
 	b.is_master_trainer
 FROM
 	quest_analytics.production_users_one_record a
+-- 	quest_analytics.production_users_one_record_new a   -- staging rebuild
 JOIN quest_analytics.user_addon b ON
+
 	b.user_id = a.user_id
 
-AND JSON_UNQUOTE(
-    JSON_EXTRACT(project_combos, '$[0].prog_name')
-) IN ('MyQuest', 'Quest Experience Lab')
+-- CHANGED: was JSON_EXTRACT(project_combos, '$[0].prog_name') IN (...), which only
+-- inspected the first array entry. No users differ today, but it breaks the moment
+-- a user's first combo belongs to another programme.
+AND JSON_VALID(a.project_combos) = 1
+AND (
+     JSON_SEARCH(a.project_combos, 'one', 'MyQuest',              NULL, '$[*].prog_name') IS NOT NULL
+  OR JSON_SEARCH(a.project_combos, 'one', 'Quest Experience Lab', NULL, '$[*].prog_name') IS NOT NULL
+)
 
 {% set prog_name_filter     = filter_values('prog_name')     | select('string') | list %}
 {% set proj_name_filter     = filter_values('proj_name')     | select('string') | list %}
@@ -118,7 +165,7 @@ AND JSON_UNQUOTE(
 {% endif %}
 
 -- -------------------------------------------------------
--- project_combos JSON filters (JSON_SEARCH)
+-- project_combos JSON filters (JSON_SEARCH — matches any array slot)
 -- -------------------------------------------------------
 
 {% if prog_name_filter %}
@@ -153,6 +200,9 @@ AND JSON_UNQUOTE(
 
 -- -------------------------------------------------------
 -- subject_combos JSON filters (JSON_SEARCH)
+-- subject_combos has one entry per subject (11+ observed), so there is no safe
+-- scalar equivalent. Keep these Jinja-only; do NOT create $[0] calculated
+-- columns for sub_name / year_category.
 -- -------------------------------------------------------
 
 {% if sub_name_filter %}
