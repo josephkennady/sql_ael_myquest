@@ -373,9 +373,31 @@ All tables below live in `quest_rearch_production` (the production LMS). The pip
 
 **Why the pipeline uses them:** Phase is resolved via two separate paths in `main_phases`:
 1. **Batch path:** User has a `batch_id` → look up `batch_phase` → `centre_phase` → `phases`
-2. **Direct path:** User is directly assigned to a phase in `phase_users` → `centre_phase` → `phases`
+2. **Direct path:** User is directly assigned to a phase in `phase_users` → `centre_phase` → `phases`,
+   matched on `centre_phase.phase_id = phase_users.phase_id` and limited to `user_type IN (3, 4)`
 
 Both paths are unioned before being joined to the final project/phase output.
+
+Batch-driven programmes (S2SD and similar) use path 1. ITI programmes — S2S Extended
+Impact, SAP-(FRSN), Publicis, LinkedIn — assign learners to a phase directly and often
+have no batch at all, so they depend entirely on path 2.
+
+> **Fixed 2026-08-21 — path 2 had never worked.** `direct_phase_user_source` emits
+> `p_batch_id = NULL` (a direct assignment is not batch-scoped), but the join in
+> `user_project_phase_rows` read `ON ph.p_batch_id = u.batch_id`. `NULL = NULL` is
+> never true in SQL, so every direct row was discarded and **63,954 active users with
+> no batch carried no phase at all**. The join is now
+> `ON (ph.p_batch_id IS NULL OR ph.p_batch_id = u.batch_id)`.
+>
+> Two conditions had to be added alongside it, or the fix would have overshot:
+> `AND cp.phase_id = pu.phase_id` (the CTE previously joined `centre_phase` on centre
+> alone, so a user matched *every* phase at their centre), and
+> `AND u.user_type IN (3, 4)` (a phase describes a learner cohort; the batch path
+> never yields a phase for staff, so without this the direct path would have given
+> one to 3,149 facilitators and 3 admins).
+>
+> Verified: Outreach-Gauribidannur, S2SD-2026-2027-(Phase 11), 49 → 65, matching the
+> questapp admin panel export exactly; Bethel Life Miao 0 → 25.
 
 ---
 
@@ -726,8 +748,9 @@ The final SELECT produces two JSON columns that encode multi-valued relationship
 **How it is built:**
 1. `active_centres` + `centre_project_map` + `active_projects` + `active_programs` → `main_centre_project`
 2. Batch path: `active_users → batch → batch_phase → centre_phase → phases → phase_project`
-3. Direct path: `phase_users → active_users → centre_phase → phases → phase_project`
-4. `main_phases` = UNION of both paths
+3. Direct path: `phase_users → active_users (type 3/4) → centre_phase (same phase_id) → phases → phase_project`
+4. `main_phases` = UNION of both paths, joined back with a NULL-tolerant batch match
+   so direct rows (which carry no batch) survive
 5. `user_project_phase_rows` = distinct combinations per user
 6. `JSON_ARRAYAGG(JSON_OBJECT(...))` collapses to one row per user
 

@@ -864,8 +864,9 @@ empty or partial data until the run finishes, and a mid-run failure leaves it th
 **A learner's phase can arrive without a batch.** `phase_users` assigns a phase
 directly, with no `student_details.batch_id`. Both that route and the batch route
 feed `main_phases`; if phase counts look low, check whether the affected users have
-a batch at all before suspecting the refresh. See "Phase Attribution" in
-[README.md](README.md).
+a batch at all before suspecting the refresh. Direct assignment applies to
+`user_type IN (3, 4)` only, so a phase count will not include facilitators or admins.
+See "Phase Attribution" in [README.md](README.md).
 
 **Error 1146 on the source DB is not a missing table.** A message naming
 `./rdsdbdata/tmp/#sql...` means MySQL's own internal temp table vanished because the RDS
