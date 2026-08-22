@@ -584,10 +584,15 @@ learners to a phase directly and often have no batch at all.
 > The join is now `ON (ph.p_batch_id IS NULL OR ph.p_batch_id = u.batch_id)`, and
 > the CTE adds `AND cp.phase_id = pu.phase_id`.
 >
-> Verified against two centres: Outreach-Gauribidannur, Phase 11, went 49 → 67
-> (the admin panel exports 65, plus two later registrations), and Bethel Life Miao
-> went 0 → 25. Neither over-assigned: 410 of 413 and 117 of 118 users respectively
-> ended with exactly one phase.
+> The direct route is restricted to `user_type IN (3, 4)`. A phase describes a
+> learner cohort, and the batch route never yields a phase for staff — verified,
+> zero type 1/2 users have a phase-linked batch. Without the restriction the direct
+> route would be the only one attaching phases to staff, giving one to 3,149
+> facilitators and 3 admins.
+>
+> Verified against two centres: Outreach-Gauribidannur, Phase 11, went 49 → **65**,
+> matching the questapp admin panel export exactly, and Bethel Life Miao went
+> 0 → 25. Neither over-assigned: every user ends with at most one phase.
 >
 > **A full refresh is required.** Phase-filtered dashboards will show more learners
 > afterwards — for phase S2SD-2026-2027-(Phase 11) alone the total moves from 1,050

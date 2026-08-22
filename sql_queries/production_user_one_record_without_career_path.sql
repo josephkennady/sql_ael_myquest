@@ -771,6 +771,12 @@ direct_phase_user_source AS (
     FROM phase_users pu
     JOIN active_users u
         ON u.user_id = pu.user_id
+       -- Phases describe a learner cohort, so restrict to learners and alumni.
+       -- The batch route never yields a phase for staff (verified: zero type 1/2
+       -- users have a phase-linked batch), so without this the direct route would
+       -- be the only one attaching phases to staff — 3,149 facilitators and 3
+       -- admins would gain one.
+       AND u.user_type IN (3, 4)
     JOIN centre_phase cp
         ON cp.centre_id = u.centre_id
        -- Honour the phase the user was actually assigned to. Without this the
