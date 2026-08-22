@@ -31,6 +31,7 @@ MySQL-based AEL/MyQuest reporting pipeline. Runs per-centre SQL to build a one-r
 │   ├── user_addon.sql                 ← Supplementary user attributes query
 │   ├── inactive_users_and_centres.sql ← Reference SELECT/DELETE for cleanup
 │   ├── superset_sql_jinja_file.sql    ← Superset virtual dataset SQL (Jinja2 filters)
+│   ├── superset_sql_jinja_file_aug_21_2026.sql ← [archive] snapshot, do not deploy
 │   └── to_push_to_server.md          ← Server deployment checklist
 ├── superset_css/
 │   ├── ael_superset.css               ← Dashboard custom CSS
